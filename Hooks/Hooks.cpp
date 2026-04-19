@@ -1,11 +1,9 @@
 #include <windows.h>
 #include <stdio.h>
-#include "Hooks.h"          // Local file
-#include "detours.h"        // Local file (based on your tree)
-#include "../SDK/IL2CPP.h"  // UP to root, DOWN to SDK
-#include "../Features/Features.h" // UP to root, DOWN to Features
+#include "Hooks.h"
+#include "detours.h"
+#include "../SDK/IL2CPP.h"
 
-// Link the library physically located in the Lib folder
 #pragma comment(lib, "../Lib/detours.lib") 
 
 namespace Hooks {
@@ -14,30 +12,45 @@ namespace Hooks {
           void* assembly = SDK::assembly_open(domain, "Assembly-CSharp");
           void* image = SDK::assembly_get_image(assembly);
 
-          // Helper lambda to find method addresses
-          auto getMethod = [&](const char* className) {
+          auto getMethod = [&](const char* className, const char* methodName, int args) {
                void* klass = SDK::class_from_name(image, "", className);
-               return klass ? SDK::get_method(klass, "Update", 0) : nullptr;
+               return klass ? SDK::get_method(klass, methodName, args) : nullptr;
                };
 
-          // Capture addresses
-          void* mStamina = getMethod("PlayerStamina");
+          // Existing Hooks
+          void* mStamina = getMethod("PlayerStamina", "Update", 0);
           if (mStamina) oStaminaUpdate = *(Update_t*)mStamina;
 
-          void* mFPC = getMethod("FirstPersonController");
+          void* mFPC = getMethod("FirstPersonController", "Update", 0);
           if (mFPC) oFPCUpdate = *(Update_t*)mFPC;
 
-          void* mGhost = getMethod("GhostInfo");
+          void* mGhost = getMethod("GhostInfo", "Update", 0);
           if (mGhost) oGhostUpdate = *(Update_t*)mGhost;
 
-          // Perform the detours
+          void* mTarot = getMethod("TarotCards", "SetCard", 1);
+          if (mTarot) oSetCard = *(SetCard_t*)mTarot;
+
+          // NEW: Reward & Level Hooks
+          void* mBonus = getMethod("LevelValues", "GetInvestigationBonusReward", 0);
+          if (mBonus) oGetBonus = *(GetBonus_t*)mBonus;
+
+          void* mPerfect = getMethod("LevelValues", "IsPerfectGame", 0);
+          if (mPerfect) oIsPerfect = *(IsPerfect_t*)mPerfect;
+
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
+
           if (oStaminaUpdate) DetourAttach(&(PVOID&)oStaminaUpdate, hkStaminaUpdate);
           if (oFPCUpdate) DetourAttach(&(PVOID&)oFPCUpdate, hkFPCUpdate);
           if (oGhostUpdate) DetourAttach(&(PVOID&)oGhostUpdate, hkGhostUpdate);
+          if (oSetCard) DetourAttach(&(PVOID&)oSetCard, hkSetCard);
+
+          // Apply new reward hooks
+          if (oGetBonus) DetourAttach(&(PVOID&)oGetBonus, hkGetBonus);
+          if (oIsPerfect) DetourAttach(&(PVOID&)oIsPerfect, hkIsPerfect);
+
           DetourTransactionCommit();
 
-          printf("[SYSTEM] Hooks successfully detoured.\n");
+          printf("[SYSTEM] LevelValues Reward Hooks Applied.\n");
      }
 }

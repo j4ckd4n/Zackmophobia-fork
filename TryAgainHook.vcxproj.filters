@@ -50,9 +50,6 @@
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="pch.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="Hooks\GhostHooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
@@ -60,6 +57,12 @@
       <Filter>Hooks</Filter>
     </ClCompile>
     <ClCompile Include="Hooks\PlayerHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\TarotHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\LevelHooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
   </ItemGroup>
