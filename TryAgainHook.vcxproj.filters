@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="lib">
+      <UniqueIdentifier>{3ac4a271-ccc1-44fc-8736-72e9b8ce45b3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Hooks">
+      <UniqueIdentifier>{b3724daa-0402-4804-ae3d-b2beae52ce1e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Features">
+      <UniqueIdentifier>{c790ad3f-0a87-408a-8961-5a5c78001ce3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="SDK">
+      <UniqueIdentifier>{de582327-1ad0-4875-9734-d129a7ff8a7c}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="framework.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Hooks\detours.h">
+      <Filter>Hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="Hooks\Hooks.h">
+      <Filter>Hooks</Filter>
+    </ClInclude>
+    <ClInclude Include="SDK\IL2CPP.h">
+      <Filter>SDK</Filter>
+    </ClInclude>
+    <ClInclude Include="Features\Features.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\GhostHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\Hooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\PlayerHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="Lib\detours.lib">
+      <Filter>lib</Filter>
+    </Library>
+  </ItemGroup>
+</Project>
