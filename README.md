@@ -10,6 +10,8 @@ Infinite Stamina: Modifies PlayerStamina offsets to lock stamina at maximum.
 
 Speed Modifier: Adjusts FirstPersonController walk/run/sprint variables via direct memory manipulation.
 
+Perfect Game: Forces the "perfect game" credit to be true and gives bonus 5000$ each match
+
 Master Toggle: Integrated F6 hotkey to enable/disable all hooks instantly.
 
 **📁 Project Structure**
