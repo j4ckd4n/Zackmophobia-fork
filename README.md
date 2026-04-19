@@ -22,6 +22,8 @@ Master Toggle: Integrated F6 hotkey to enable/disable all hooks instantly.
 
 /Features: Global state management and toggle systems.
 
+/Menu: In Progress....
+
 dllmain.cpp: The multi-threaded entry point of the DLL.
 
 **🛠️ Technical Implementation**
