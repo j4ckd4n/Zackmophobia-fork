@@ -18,7 +18,8 @@ namespace SDK {
      inline il2cpp_class_get_method_from_name_t get_method = nullptr;
 
      // Helper to convert Unity's internal System.String to a standard C++ string
-     inline std::string IL2CPP_To_String(void* ptr) {
+     inline std::string IL2CPP_To_String(void* ptr) 
+     {
           if (!ptr || (uintptr_t)ptr < 0x10000 || IsBadReadPtr(ptr, 0x18)) return "";
           int32_t length = *(int32_t*)((char*)ptr + 0x10);
           if (length <= 0 || length > 32) return "";

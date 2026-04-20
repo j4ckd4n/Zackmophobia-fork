@@ -1,11 +1,12 @@
 #include <windows.h>
 #include <thread>
-#include "SDK/IL2CPP.h"   // Look DOWN into SDK folder
-#include "Hooks/Hooks.h" // Look DOWN into Hooks folder
+#include "SDK/IL2CPP.h"   
+#include "Hooks/Hooks.h" 
 
-void MainThread() {
-     AllocConsole();
-     FILE* f; freopen_s(&f, "CONOUT$", "w", stdout);
+void MainThread() 
+{
+     AllocConsole(); // Allocate console
+     FILE* f; freopen_s(&f, "CONOUT$", "w", stdout); // Initialize Console
 
      // Wait for the game engine to fully load
      HMODULE gameAssembly = nullptr;
@@ -25,9 +26,8 @@ void MainThread() {
      Hooks::Init();
 }
 
-BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID res) {
-     if (reason == DLL_PROCESS_ATTACH) {
-          std::thread(MainThread).detach();
-     }
+BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID res) 
+{
+     if (reason == DLL_PROCESS_ATTACH) std::thread(MainThread).detach();
      return TRUE;
 }

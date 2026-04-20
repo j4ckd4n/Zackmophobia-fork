@@ -4,7 +4,7 @@ A high-performance C++ internal cheat for Phasmophobia. This project utilizes th
 
 **🚀 Features**
 
-Ghost Identification: Deep-scans memory to extract the Ghost's Name and real Type (bypassing Spirit/Journal defaults).
+Ghost Identification: Deep-scans memory to extract the Ghost's Name and real type.
 
 Infinite Stamina: Modifies PlayerStamina offsets to lock stamina at maximum.
 
@@ -12,7 +12,7 @@ Speed Modifier: Adjusts FirstPersonController walk/run/sprint variables via dire
 
 Perfect Game: Forces the "perfect game" credit to be true and gives bonus 5000$ each match
 
-Master Toggle: Integrated F6 hotkey to enable/disable all hooks instantly.
+Keybind Toggling: F4, F5, and F6 used as keybinds to toggle different mods
 
 **📁 Project Structure**
 
@@ -32,11 +32,9 @@ The mod operates by:
 
 Dynamic Linking: Locating GameAssembly.dll and mapping IL2CPP export functions.
 
-Metadata Traversal: Using the IL2CPP API to traverse the game's assembly image and find method pointers for Update calls.
+Metadata Traversal: Using the IL2CPP API to traverse the game's assembly image and find method pointers for function calls.
 
 Detouring: Using Microsoft Detours to overwrite function entry points with jumps to our custom logic.
-
-Memory Scanning: Implementing a "Backwards-Scan" logic to verify ghost types based on non-zero integer priority in the GhostInfo struct.
 
 **🤖 AI Collaboration**
 
