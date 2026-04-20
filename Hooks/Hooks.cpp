@@ -8,6 +8,8 @@
 
 namespace Hooks {
      void Init() {
+
+          printf("[SYSTEM] Welcome to Zackmophobia\nF4: Toggle Stamina Mod\nF5: Toggle Speed Mod\nF6: Toggle all other mods(perfect game, tarot card force, ghost info)\n");
           void* domain = SDK::domain_get();
           void* assembly = SDK::assembly_open(domain, "Assembly-CSharp");
           void* image = SDK::assembly_get_image(assembly);
