@@ -154,6 +154,8 @@
     <ClCompile Include="Hooks\GhostHooks.cpp" />
     <ClCompile Include="Hooks\Hooks.cpp" />
     <ClCompile Include="Hooks\LevelHooks.cpp" />
+    <ClCompile Include="Hooks\MediaRewardHooks.cpp" />
+    <ClCompile Include="Hooks\NoKickHooks.cpp" />
     <ClCompile Include="Hooks\PlayerHooks.cpp" />
     <ClCompile Include="Hooks\TarotHooks.cpp" />
   </ItemGroup>

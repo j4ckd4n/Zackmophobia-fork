@@ -6,7 +6,7 @@ int Hooks::hkGetBonus(void* instance)
 {
      if (Features::CheckToggle())
      {
-          return 5000;
+          return 20000;
      }
 }
 

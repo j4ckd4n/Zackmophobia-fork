@@ -8,8 +8,8 @@
 
 namespace Hooks {
      void Init() {
+          printf("[SYSTEM] Welcome to Zackmophobia\nF4: Toggle Stamina Mod\nF5: Toggle Speed Mod\nF6: Toggle all other mods\n");
 
-          printf("[SYSTEM] Welcome to Zackmophobia\nF4: Toggle Stamina Mod\nF5: Toggle Speed Mod\nF6: Toggle all other mods(perfect game, tarot card force, ghost info)\n");
           void* domain = SDK::domain_get();
           void* assembly = SDK::assembly_open(domain, "Assembly-CSharp");
           void* image = SDK::assembly_get_image(assembly);
@@ -19,7 +19,7 @@ namespace Hooks {
                return klass ? SDK::get_method(klass, methodName, args) : nullptr;
                };
 
-          // Existing Hooks
+          // Existing Hooks (Dereferenced as per your SDK)
           void* mStamina = getMethod("PlayerStamina", "Update", 0);
           if (mStamina) oStaminaUpdate = *(Update_t*)mStamina;
 
@@ -32,12 +32,17 @@ namespace Hooks {
           void* mTarot = getMethod("TarotCards", "SetCard", 1);
           if (mTarot) oSetCard = *(SetCard_t*)mTarot;
 
-          // NEW: Reward & Level Hooks
           void* mBonus = getMethod("LevelValues", "GetInvestigationBonusReward", 0);
           if (mBonus) oGetBonus = *(GetBonus_t*)mBonus;
 
           void* mPerfect = getMethod("LevelValues", "IsPerfectGame", 0);
           if (mPerfect) oIsPerfect = *(IsPerfect_t*)mPerfect;
+
+          void* mKickPlayerNetworked = getMethod("ServerManager", "KickPlayerNetworked", 2);
+          if (mKickPlayerNetworked) oServerManagerKickPlayerNetworked = *(KickPlayerNetworked_t*)mKickPlayerNetworked;
+
+          void* mGetRewardAmount = getMethod("Media", "GetRewardAmount", 0);
+          if (mGetRewardAmount) oGetRewardAmount = *(GetRewardAmount_t*)mGetRewardAmount;
 
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
@@ -46,13 +51,12 @@ namespace Hooks {
           if (oFPCUpdate) DetourAttach(&(PVOID&)oFPCUpdate, hkFPCUpdate);
           if (oGhostUpdate) DetourAttach(&(PVOID&)oGhostUpdate, hkGhostUpdate);
           if (oSetCard) DetourAttach(&(PVOID&)oSetCard, hkSetCard);
-
-          // Apply new reward hooks
           if (oGetBonus) DetourAttach(&(PVOID&)oGetBonus, hkGetBonus);
           if (oIsPerfect) DetourAttach(&(PVOID&)oIsPerfect, hkIsPerfect);
+          if (oServerManagerKickPlayerNetworked) DetourAttach(&(PVOID&)oServerManagerKickPlayerNetworked, hkKickPlayerNetworked);
+          if (oGetRewardAmount) DetourAttach(&(PVOID&)oGetRewardAmount, hkGetRewardAmount);
 
           DetourTransactionCommit();
-
-          printf("[SYSTEM] LevelValues Reward Hooks Applied.\n");
+          printf("[SYSTEM] All Hooks Applied Successfully.\n");
      }
 }

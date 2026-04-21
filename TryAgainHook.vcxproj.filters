@@ -65,6 +65,12 @@
     <ClCompile Include="Hooks\LevelHooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
+    <ClCompile Include="Hooks\NoKickHooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\MediaRewardHooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Library Include="Lib\detours.lib">
