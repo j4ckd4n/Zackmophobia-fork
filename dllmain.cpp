@@ -2,11 +2,15 @@
 #include <thread>
 #include "SDK/IL2CPP.h"   
 #include "Hooks/Hooks.h" 
+#include "Menu/Menu.h"
+#include "Utils/Logger.h"
 
 void MainThread() 
 {
      AllocConsole(); // Allocate console
      FILE* f; freopen_s(&f, "CONOUT$", "w", stdout); // Initialize Console
+     Logger::Init();
+     Logger::Log("[SYSTEM] Main thread started.");
 
      // Wait for the game engine to fully load
      HMODULE gameAssembly = nullptr;
@@ -14,6 +18,7 @@ void MainThread()
           gameAssembly = GetModuleHandleW(L"GameAssembly.dll");
           Sleep(100);
      }
+     Logger::Log("[SYSTEM] GameAssembly.dll detected.");
 
      // Initialize the SDK function pointers
      SDK::domain_get = (SDK::il2cpp_domain_get_t)GetProcAddress(gameAssembly, "il2cpp_domain_get");
@@ -24,6 +29,9 @@ void MainThread()
 
      // Start the hooking process
      Hooks::Init();
+
+     // Launch interactive console menu
+     Menu::Start();
 }
 
 BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID res) 
