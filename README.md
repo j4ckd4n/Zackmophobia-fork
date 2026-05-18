@@ -32,6 +32,8 @@ Speed Modifier: Adjusts FirstPersonController walk/run/sprint variables via dire
 
 Perfect Game: Forces the "perfect game" credit to be true and gives bonus 5000$ each match
 
+- "Perfect Game" hook only affects the current player. It does not affect others at this time.
+
 Keybind Toggling: F4, F5, and F6 used as keybinds to toggle different mods
 
 **📁 Project Structure**
