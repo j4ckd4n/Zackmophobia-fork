@@ -18,7 +18,7 @@ namespace Hooks {
           auto getMethod = [&](const char* className, const char* methodName, int args) {
                void* klass = SDK::class_from_name(image, "", className);
                return klass ? SDK::get_method(klass, methodName, args) : nullptr;
-               };
+          };
 
           // Existing Hooks (Dereferenced as per your SDK)
           void* mStamina = getMethod("PlayerStamina", "Update", 0);
@@ -53,17 +53,17 @@ namespace Hooks {
           if (mGetRewardAmount) oGetRewardAmount = *(GetRewardAmount_t*)mGetRewardAmount;
           Logger::Log("[HOOK] Media.GetRewardAmount %s", mGetRewardAmount ? "resolved" : "missing");
 
-		  void* mChangeSanity = getMethod("PlayerSanity", "ChangeSanity", 1);
-		  if (mChangeSanity) oChangeSanity = *(ChangeSanity_t*)mChangeSanity;
-	      Logger::Log("[HOOK] PlayerSanity.ChangeSanity %s", mChangeSanity ? "resolved" : "missing");
+          void* mChangeSanity = getMethod("PlayerSanity", "ChangeSanity", 1);
+          if (mChangeSanity) oChangeSanity = *(ChangeSanity_t*)mChangeSanity;
+          Logger::Log("[HOOK] PlayerSanity.ChangeSanity %s", mChangeSanity ? "resolved" : "missing");
 
-		  void* mGhostAI_Init = getMethod("GhostAI", "Init", 1);
-		  if (mGhostAI_Init) oGhostAI_Init = *(GhostAI_Init_t*)mGhostAI_Init;
-		  Logger::Log("[HOOK] GhostAI.Init %s", mGhostAI_Init ? "resolved" : "missing");
+          void* mGhostAI_Init = getMethod("GhostAI", "Init", 1);
+          if (mGhostAI_Init) oGhostAI_Init = *(GhostAI_Init_t*)mGhostAI_Init;
+          Logger::Log("[HOOK] GhostAI.Init %s", mGhostAI_Init ? "resolved" : "missing");
 
-		  void* mGhostAI_Hunting = getMethod("GhostAI", "Hunting", 3);
-		  if (mGhostAI_Hunting) fnGhostAI_Hunting = *(GhostAI_Hunting_t*)mGhostAI_Hunting;
-		  Logger::Log("[CALL] GhostAI.Hunting %s", mGhostAI_Hunting ? "resolved" : "missing");
+          void* mGhostAI_Hunting = getMethod("GhostAI", "Hunting", 3);
+          if (mGhostAI_Hunting) fnGhostAI_Hunting = *(GhostAI_Hunting_t*)mGhostAI_Hunting;
+          Logger::Log("[CALL] GhostAI.Hunting %s", mGhostAI_Hunting ? "resolved" : "missing");
 
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
@@ -76,8 +76,8 @@ namespace Hooks {
           if (oIsPerfect) DetourAttach(&(PVOID&)oIsPerfect, hkIsPerfect);
           if (oServerManagerKickPlayerNetworked) DetourAttach(&(PVOID&)oServerManagerKickPlayerNetworked, hkKickPlayerNetworked);
           if (oGetRewardAmount) DetourAttach(&(PVOID&)oGetRewardAmount, hkGetRewardAmount);
-		  if (oChangeSanity) DetourAttach(&(PVOID&)oChangeSanity, hkChangeSanity);
-		  if (oGhostAI_Init) DetourAttach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
+          if (oChangeSanity) DetourAttach(&(PVOID&)oChangeSanity, hkChangeSanity);
+          if (oGhostAI_Init) DetourAttach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
 
           DetourTransactionCommit();
           printf("[SYSTEM] All Hooks Applied Successfully.\n");
