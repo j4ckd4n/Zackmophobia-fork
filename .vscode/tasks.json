@@ -1,0 +1,26 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "process",
+            "label": "MSBuild: Build Solution (Debug|x64)",
+            "command": "msbuild",
+            "args": [
+                "${workspaceFolder}\\TryAgainHook.sln",
+                "/p:Configuration=Debug",
+                "/p:Platform=x64",
+                "/m"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
