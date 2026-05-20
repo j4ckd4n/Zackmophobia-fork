@@ -11,4 +11,6 @@ namespace Features {
     inline bool bNoKick           = false;
     inline bool bNoSanityLoss     = false;
     inline bool bForceHunting     = false; // triggers once then resets
+    inline char* cPlayerPosSource = nullptr; // set to "cache" when position is updated from cached transform, "live" when read directly from FPC each time
+    inline float cPlayerPos[3]; // updated every 120 ticks when FPCUpdate hook is active
 }
