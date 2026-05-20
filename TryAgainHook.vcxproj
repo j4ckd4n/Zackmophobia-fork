@@ -111,14 +111,14 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(ProjectDir)Menu\imgui;$(ProjectDir)kiero</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(SolutionDir)Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -132,14 +132,14 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(ProjectDir)Menu\imgui;$(ProjectDir)kiero</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>detours.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>detours.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(SolutionDir)Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
@@ -153,6 +153,13 @@
   </ItemGroup>
   <ItemGroup>
         <ClCompile Include="Menu\Menu.cpp" />
+    <ClCompile Include="Menu\imgui\imgui.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_draw.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_tables.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_demo.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_impl_dx11.cpp" />
+    <ClCompile Include="Menu\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="Hooks\GhostHooks.cpp" />
     <ClCompile Include="Hooks\Hooks.cpp" />
@@ -161,6 +168,7 @@
     <ClCompile Include="Hooks\NoKickHooks.cpp" />
     <ClCompile Include="Hooks\PlayerHooks.cpp" />
     <ClCompile Include="Hooks\TarotHooks.cpp" />
+    <ClCompile Include="kiero\kiero.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="Lib\detours.lib" />
