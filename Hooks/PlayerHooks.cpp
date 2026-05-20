@@ -144,31 +144,4 @@ namespace Hooks {
           }
           oChangeSanity(instance, amount, methodInfo); // Call original game code
      }
-
-     // void hkSetupPlayer(void* instance, void* methodInfo) 
-     // {
-     //      static bool loggedSetup = false;
-     //      if (!loggedSetup) {
-     //           Logger::Log("[HOOK] PlayerController.SetupPlayer is executing.");
-     //           loggedSetup = true;
-     //      }
-
-     //      if (instance && !IsBadReadPtr(instance, 0x200)) 
-     //      {
-     //           Player_o* player = (Player_o*)instance;
-     //           Player_fields* fields = player->fields;
-     //           if (fields){
-     //                void* transform = fields->transformObj;
-     //                if (transform && !IsBadReadPtr(transform, 0x100)) {
-     //                     // Example: Log player's initial position
-     //                     float* pos = (float*)((char*)transform + 0x90); // position is usually at offset 0x90 in a Transform
-     //                     if (!IsBadReadPtr(pos, 12)) {
-     //                          Logger::Log("[Player Setup] Initial Position: X=%.2f, Y=%.2f, Z=%.2f", pos[0], pos[1], pos[2]);
-     //                     }
-     //                }
-     //           }
-
-     //      }
-     //      oSetupPlayer(instance, methodInfo); // Call original game code
-     // }
 }
