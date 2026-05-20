@@ -177,6 +177,14 @@ namespace Menu {
                 ImGui::EndTabItem();
             }
 
+            if (ImGui::BeginTabItem("Level Info")) {
+                ImGui::TextUnformatted("This tab should populate once the map is loaded.");
+                ImGui::Separator();
+                ImGui::Text("Bone Position: %.2f, %.2f, %.2f", Features::fBonePos[0], Features::fBonePos[1], Features::fBonePos[2]);
+
+                ImGui::EndTabItem();
+            }
+
             ImGui::EndTabBar();
         }
 
