@@ -83,6 +83,8 @@ namespace Hooks {
     typedef void (*GhostAI_ChangeState_t)(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
     typedef void (*SetupPlayer_t)(void* instance, void* methodInfo);
 
+    typedef void (*DNAEvidence_Spawn_t)(void* instance, int32_t iParam1, void* methodInfo);
+
     // Unity typedefs
     struct Vector3 {
         float x;
@@ -113,6 +115,8 @@ namespace Hooks {
     inline GhostAI_ChangeState_t oGhostAI_ChangeState = nullptr;
     inline SetupPlayer_t oSetupPlayer = nullptr;
 
+    inline DNAEvidence_Spawn_t oDNAEvidence_Spawn = nullptr;
+
     // Unity function pointers (if needed for more complex hooks)
     inline GetTransform_t oGetTransform = nullptr; // UnityEngine.Component.get_transform
     inline GetPosition_t oGetPosition = nullptr; // UnityEngine.Transform.get_position
@@ -132,6 +136,8 @@ namespace Hooks {
 	void ForceHunting(); // calls GhostAI::Hunting on the cached ghost instance
     void hkLightSwitchStart(void* instance, void* methodInfo);
     void hkSetupPlayer(void* instance, void* methodInfo);
+
+    void hkDNAEvidence_Spawn(void* instance, int32_t iParam1, void* methodInfo);
 
     void Init();
 }

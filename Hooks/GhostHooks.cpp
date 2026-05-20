@@ -218,7 +218,7 @@ void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
                 Features::cGhostPos[0] = pos.x;
                 Features::cGhostPos[1] = pos.y;
                 Features::cGhostPos[2] = pos.z;
-                Logger::Log("[GHOST] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
+                // Logger::Log("[GHOST] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
             }
         }
 

@@ -33,7 +33,7 @@ namespace Hooks {
                          void* transform = oGetTransform(fpcInstance, nullptr);
                          if (SDK::IsReadable(transform, 0x20)) {
                               // On x64 IL2CPP, Vector3 can be returned through an explicit out pointer in many builds.
-                              Vector3 pos{};
+                              Hooks::Vector3 pos{};
                               oGetPosition(&pos, transform, nullptr);
                               if (LooksLikeWorldPos(pos)) {
                                    out = pos;
@@ -93,8 +93,8 @@ namespace Hooks {
           }
 
           static int sampleTick = 0;
-          if ((++sampleTick % 120) == 0) {
-               Vector3 pos{};
+          if ((++sampleTick % 60) == 0) {
+               Hooks::Vector3 pos{};
                const char* source = nullptr;
                if (TryGetFPCPosition(instance, pos, source)) {
                     Features::cPlayerPosSource = const_cast<char*>(source);

@@ -168,6 +168,7 @@
     <ClCompile Include="Hooks\NoKickHooks.cpp" />
     <ClCompile Include="Hooks\PlayerHooks.cpp" />
     <ClCompile Include="Hooks\TarotHooks.cpp" />
+    <ClCompile Include="Hooks\DNAEvidenceHooks.cpp" />
     <ClCompile Include="kiero\kiero.cpp" />
   </ItemGroup>
   <ItemGroup>

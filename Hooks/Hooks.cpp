@@ -89,6 +89,10 @@ namespace Hooks {
           void* mUnityGetPosition = getUnityMethod("UnityEngine", "Transform", "get_position", 0);
           Logger::Log("[UNITY] Transform.get_position %s", mUnityGetPosition ? "resolved" : "missing");
           
+          void* mDNAEvidence_Spawn = getMethod("DNAEvidence", "Spawn", 1);
+          if (mDNAEvidence_Spawn) oDNAEvidence_Spawn = *(DNAEvidence_Spawn_t*)mDNAEvidence_Spawn;
+          Logger::Log("[HOOK] DNAEvidence.Spawn %s", mDNAEvidence_Spawn ? "resolved" : "missing");
+
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
 
@@ -104,6 +108,8 @@ namespace Hooks {
           if (oChangeSanity) DetourAttach(&(PVOID&)oChangeSanity, hkChangeSanity);
           if (oGhostAI_Init) DetourAttach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
           if (oGhostAI_ChangeState) DetourAttach(&(PVOID&)oGhostAI_ChangeState, hkGhostAI_ChangeState);
+
+          if (oDNAEvidence_Spawn) DetourAttach(&(PVOID&)oDNAEvidence_Spawn, hkDNAEvidence_Spawn);
 
           oGetTransform = mUnityGetTransform ? *(GetTransform_t*)mUnityGetTransform : nullptr;
           oGetPosition = mUnityGetPosition ? *(GetPosition_t*)mUnityGetPosition : nullptr;
