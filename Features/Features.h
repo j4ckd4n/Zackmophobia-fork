@@ -23,4 +23,5 @@ namespace Features {
     inline float cGhostPos[3]; // updated every 60 ticks when GhostUpdate hook is active and ghost instance is valid
     inline const char* cHistoricalStates[10] = {}; // could be used to track previous ghost states if desired
 
+    inline float fBonePos[3];
 }
