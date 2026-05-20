@@ -6,25 +6,66 @@
 #include "../Features/Features.h"
 #include "../Utils/Logger.h"
 
-// TODO: Broken function, causes game to crash when calling due to `nullptr` usage.
+namespace {
+    constexpr int32_t GHOST_STATE_HUNTING = 2;
+}
+
 void Hooks::ForceHunting()
 {
-    // Ghost Hunting function as seen in GhostAI::Hunting dump:
-    // void GhostAI::Hunting(GhostAI_o *ghostAIobj, bool bParam1, in32_t iParam2, Photon_Pun_PhotonMessageInfo *messageInfo, MethodInfo* methodInfo)
-
-	if (!fnGhostAI_Hunting)
-	{
-		Logger::Log("[ERROR] ForceHunting: GhostAI::Hunting not resolved.");
-		return;
-	}
 	if (!gCurrentGhostAI || IsBadReadPtr(gCurrentGhostAI, sizeof(GhostAI_o)))
 	{
 		Logger::Log("[ERROR] ForceHunting: No valid ghost instance cached.");
 		return;
 	}
 
-	Logger::Log("[MOD] ForceHunting: Triggering hunt on cached ghost.");
-	fnGhostAI_Hunting(gCurrentGhostAI, true, 0, nullptr, nullptr);
+    // Preferred path: ChangeState(Hunting) avoids crafting PhotonMessageInfo manually.
+	if (oGhostAI_ChangeState)
+	{
+        Logger::Log("[MOD] ForceHunting: GhostAI.ChangeState -> HUNTING.");
+        __try {
+            oGhostAI_ChangeState(gCurrentGhostAI, GHOST_STATE_HUNTING, nullptr, true, nullptr);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            Logger::Log("[ERROR] ForceHunting: ChangeState raised an exception.");
+        }
+		return;
+	}
+
+    // Fallback path for older builds where ChangeState isn't available.
+	if (!fnGhostAI_Hunting)
+	{
+		Logger::Log("[ERROR] ForceHunting: neither GhostAI.ChangeState nor GhostAI.Hunting resolved.");
+		return;
+	}
+
+    Logger::Log("[MOD] ForceHunting: Triggering hunt on cached ghost.");
+    __try {
+        fnGhostAI_Hunting(gCurrentGhostAI, true, 0, nullptr, nullptr);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Logger::Log("[ERROR] ForceHunting: Hunting raised an exception.");
+    }
+}
+
+void Hooks::hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo)
+{
+    static bool logged = false;
+    if (!logged) {
+        Logger::Log("[HOOK] GhostAI.ChangeState is executing.");
+        logged = true;
+    }
+
+    if (instance && !IsBadReadPtr(instance, sizeof(GhostAI_o))) {
+        gCurrentGhostAI = (GhostAI_o*)instance;
+    }
+
+    if (state == GHOST_STATE_HUNTING) {
+        Logger::Log("[GHOST] ChangeState -> HUNTING (bParam2=%s, photonInteract=%p)", bParam2 ? "true" : "false", photonInteract);
+    }
+
+    if (oGhostAI_ChangeState) {
+        oGhostAI_ChangeState(instance, state, photonInteract, bParam2, methodInfo);
+    }
 }
 
 // This is called once per level start/ghost spawn.
@@ -72,6 +113,12 @@ void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
     if (!logged) {
         Logger::Log("[HOOK] GhostInfo.Update is executing.");
         logged = true;
+    }
+
+    // Execute force-hunt requests on a game thread to avoid cross-thread Unity/IL2CPP calls.
+    if (Features::bForceHunting) {
+        Features::bForceHunting = false;
+        ForceHunting();
     }
 
     if (Features::bGhostTypeEnabled && instance && !IsBadReadPtr(instance, 0x200)) {

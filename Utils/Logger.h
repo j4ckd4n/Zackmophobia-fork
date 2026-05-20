@@ -11,7 +11,7 @@ namespace Logger {
      inline std::mutex gMutex;
      inline FILE* gFile = nullptr;
 
-     static constexpr int MAX_LOG_LINES = 12;
+     static constexpr int MAX_LOG_LINES = 50;
      inline std::deque<std::string> gLogLines;
 
      inline void Init()

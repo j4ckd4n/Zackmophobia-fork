@@ -15,8 +15,16 @@ namespace Hooks {
           void* assembly = SDK::assembly_open(domain, "Assembly-CSharp");
           void* image = SDK::assembly_get_image(assembly);
 
+          void* unityAssembly = SDK::assembly_open(domain, "UnityEngine.CoreModule");
+          void* unityImage = SDK::assembly_get_image(unityAssembly);
+
           auto getMethod = [&](const char* className, const char* methodName, int args) {
                void* klass = SDK::class_from_name(image, "", className);
+               return klass ? SDK::get_method(klass, methodName, args) : nullptr;
+          };
+
+          auto getUnityMethod = [&](const char* namespaze, const char* className, const char* methodName, int args) {
+               void* klass = SDK::class_from_name(unityImage, namespaze, className);
                return klass ? SDK::get_method(klass, methodName, args) : nullptr;
           };
 
@@ -32,6 +40,10 @@ namespace Hooks {
           void* mGhost = getMethod("GhostInfo", "Update", 0);
           if (mGhost) oGhostUpdate = *(Update_t*)mGhost;
           Logger::Log("[HOOK] GhostInfo.Update %s", mGhost ? "resolved" : "missing");
+
+          void* mLightSwitchStart = getMethod("LightSwitch", "Start", 0);
+          if (mLightSwitchStart) oLightSwitchStart = *(Update_t*)mLightSwitchStart;
+          Logger::Log("[HOOK] LightSwitch.Start %s", mLightSwitchStart ? "resolved" : "missing");
 
           void* mTarot = getMethod("TarotCards", "SetCard", 1);
           if (mTarot) oSetCard = *(SetCard_t*)mTarot;
@@ -65,12 +77,25 @@ namespace Hooks {
           if (mGhostAI_Hunting) fnGhostAI_Hunting = *(GhostAI_Hunting_t*)mGhostAI_Hunting;
           Logger::Log("[CALL] GhostAI.Hunting %s", mGhostAI_Hunting ? "resolved" : "missing");
 
+          void* mGhostAI_ChangeState = getMethod("GhostAI", "ChangeState", 3);
+          if (mGhostAI_ChangeState) oGhostAI_ChangeState = *(GhostAI_ChangeState_t*)mGhostAI_ChangeState;
+          Logger::Log("[HOOK] GhostAI.ChangeState %s", mGhostAI_ChangeState ? "resolved" : "missing");
+
+          // Unity methods returned by il2cpp_class_get_method_from_name are MethodInfo*.
+          // We must dereference once to get the native callable method pointer.
+          void* mUnityGetTransform = getUnityMethod("UnityEngine", "Component", "get_transform", 0);
+          Logger::Log("[UNITY] Component.get_transform %s", mUnityGetTransform ? "resolved" : "missing");
+
+          void* mUnityGetPosition = getUnityMethod("UnityEngine", "Transform", "get_position", 0);
+          Logger::Log("[UNITY] Transform.get_position %s", mUnityGetPosition ? "resolved" : "missing");
+          
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
 
           if (oStaminaUpdate) DetourAttach(&(PVOID&)oStaminaUpdate, hkStaminaUpdate);
           if (oFPCUpdate) DetourAttach(&(PVOID&)oFPCUpdate, hkFPCUpdate);
           if (oGhostUpdate) DetourAttach(&(PVOID&)oGhostUpdate, hkGhostUpdate);
+          if (oLightSwitchStart) DetourAttach(&(PVOID&)oLightSwitchStart, hkLightSwitchStart);
           if (oSetCard) DetourAttach(&(PVOID&)oSetCard, hkSetCard);
           if (oGetBonus) DetourAttach(&(PVOID&)oGetBonus, hkGetBonus);
           if (oIsPerfect) DetourAttach(&(PVOID&)oIsPerfect, hkIsPerfect);
@@ -78,6 +103,10 @@ namespace Hooks {
           if (oGetRewardAmount) DetourAttach(&(PVOID&)oGetRewardAmount, hkGetRewardAmount);
           if (oChangeSanity) DetourAttach(&(PVOID&)oChangeSanity, hkChangeSanity);
           if (oGhostAI_Init) DetourAttach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
+          if (oGhostAI_ChangeState) DetourAttach(&(PVOID&)oGhostAI_ChangeState, hkGhostAI_ChangeState);
+
+          oGetTransform = mUnityGetTransform ? *(GetTransform_t*)mUnityGetTransform : nullptr;
+          oGetPosition = mUnityGetPosition ? *(GetPosition_t*)mUnityGetPosition : nullptr;
 
           DetourTransactionCommit();
           printf("[SYSTEM] All Hooks Applied Successfully.\n");

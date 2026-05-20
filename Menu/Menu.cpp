@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include <thread>
+#include <algorithm>
 #include "Menu.h"
 #include "../Features/Features.h"
 #include "../Hooks/Hooks.h"
@@ -23,7 +24,7 @@ namespace Menu {
         { "Bonus Reward",      &Features::bBonusReward,       false },
         { "No Kick",           &Features::bNoKick,            false },
         { "No Sanity Loss",    &Features::bNoSanityLoss,      false },
-        //{ "Force Hunt [ACTION]",&Features::bForceHunting,     true  }, // Does not work yet. Need to intercept how the calls are made. ChangeState & Hunting are some prime candidates
+        { "Force Hunt [ACTION]",&Features::bForceHunting,     true  }, // Does not work yet. Need to intercept how the calls are made. ChangeState & Hunting are some prime candidates
     };
 
     static constexpr int ITEM_COUNT = sizeof(s_items) / sizeof(s_items[0]);
@@ -72,6 +73,23 @@ namespace Menu {
 
     static void MenuThread() {
         HideCursor();
+        // Increase console buffer and window size to reduce flicker when many log lines are printed.
+        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hOut != INVALID_HANDLE_VALUE) {
+            CONSOLE_SCREEN_BUFFER_INFO csbi;
+            if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+                COORD newSize = csbi.dwSize;
+                newSize.X = std::max<SHORT>(newSize.X, (SHORT)LOG_COL_WIDTH);
+                newSize.Y = std::max<SHORT>(newSize.Y, (SHORT)1000); // large buffer for logs
+                SetConsoleScreenBufferSize(hOut, newSize);
+
+                COORD largest = GetLargestConsoleWindowSize(hOut);
+                SHORT winH = (SHORT)std::min<int>(largest.Y, 60); // visible window height
+                SMALL_RECT window = { 0, 0, (SHORT)(newSize.X - 1), (SHORT)(winH - 1) };
+                SetConsoleWindowInfo(hOut, TRUE, &window);
+            }
+        }
+
         system("cls");
 
         int selected = 0;
@@ -91,7 +109,8 @@ namespace Menu {
             }
             if (GetAsyncKeyState(VK_RETURN) & 1) {
                 if (s_items[selected].isAction) {
-                    Hooks::ForceHunting();
+                    Features::bForceHunting = true;
+                    Logger::Log("[MENU] Force Hunt requested.");
                 } else {
                     *s_items[selected].state = !*s_items[selected].state;
                     Logger::Log("[MENU] %s: %s", s_items[selected].label, *s_items[selected].state ? "ON" : "OFF");
