@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include "../SDK/IL2CPP.h"
+#include "../SDK/il2cpp_subset.h"
 
 namespace Hooks {
 
@@ -9,6 +10,9 @@ namespace Hooks {
     struct LevelRoom_o;
     struct GhostAI_fields;
     struct GhostInfo_Fields;
+
+    // `UnityEngine_Vector3_o`, `FPC_o`, and `FPC_fields` are provided by
+    // SDK/il2cpp_subset.h to avoid duplicating large generated headers here.
 
     struct GhostData_Fields {
         int32_t ghostTypeId1;
@@ -64,6 +68,8 @@ namespace Hooks {
         GhostAI_fields fields;
     };
 
+    // `Player_o` and `Player_fields` are provided by SDK/il2cpp_subset.h.
+
     typedef void (*Update_t)(void* instance, void* methodInfo);
     typedef void (*SetCard_t)(void* instance, int cardType, void* methodInfo);
     typedef int (*GetBonus_t)(void* instance);
@@ -74,14 +80,28 @@ namespace Hooks {
     typedef void (*ChangeSanity_t)(void* instance, float amount, void* methodInfo);
     typedef void (*GhostAI_Init_t)(void* instance, GhostData_o *data, void* methodInfo);
     typedef void (*GhostAI_Hunting_t)(void* instance, bool someBool, int32_t someInt32, void* photonMessageInfo, void* methodInfo);
+    typedef void (*GhostAI_ChangeState_t)(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
+    typedef void (*SetupPlayer_t)(void* instance, void* methodInfo);
+
+    // Unity typedefs
+    struct Vector3 {
+        float x;
+        float y;
+        float z;
+    };
+
+    typedef void* (*GetTransform_t)(void* instance, void* method);
+    typedef void (*GetPosition_t)(Vector3* ret, void* instance, void* method);
 
     // Cached ghost instance — set when GhostAI::Init fires, cleared when null
     inline GhostAI_o* gCurrentGhostAI = nullptr;
+    inline void* gCurrentLightSwitch = nullptr;
 
     // Original function pointers
     inline Update_t oStaminaUpdate = nullptr;
     inline Update_t oFPCUpdate = nullptr;
     inline Update_t oGhostUpdate = nullptr;
+    inline Update_t oLightSwitchStart = nullptr;
     inline SetCard_t oSetCard = nullptr;
     inline GetBonus_t oGetBonus = nullptr;
     inline IsPerfect_t oIsPerfect = nullptr;
@@ -90,6 +110,12 @@ namespace Hooks {
     inline ChangeSanity_t oChangeSanity = nullptr;
     inline GhostAI_Init_t oGhostAI_Init = nullptr;
 	inline GhostAI_Hunting_t fnGhostAI_Hunting = nullptr; // direct call, not a detour
+    inline GhostAI_ChangeState_t oGhostAI_ChangeState = nullptr;
+    inline SetupPlayer_t oSetupPlayer = nullptr;
+
+    // Unity function pointers (if needed for more complex hooks)
+    inline GetTransform_t oGetTransform = nullptr; // UnityEngine.Component.get_transform
+    inline GetPosition_t oGetPosition = nullptr; // UnityEngine.Transform.get_position
 
 	// Hook function declarations
     void hkStaminaUpdate(void* instance, void* methodInfo);
@@ -102,7 +128,10 @@ namespace Hooks {
     int hkGetRewardAmount(void* instance, void* methodInfo);
     void hkChangeSanity(void* instance, float amount, void* methodInfo);
 	void hkGhostAI_Init(void* instance, GhostData_o *data, void* methodInfo);
+	void hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
 	void ForceHunting(); // calls GhostAI::Hunting on the cached ghost instance
+    void hkLightSwitchStart(void* instance, void* methodInfo);
+    void hkSetupPlayer(void* instance, void* methodInfo);
 
     void Init();
 }

@@ -36,3 +36,14 @@ bool Hooks::hkIsPerfect(void* instance)
 
      return oIsPerfect ? oIsPerfect(instance) : false;
 }
+
+void Hooks::hkLightSwitchStart(void* instance, void* methodInfo)
+{
+     if (instance && !IsBadReadPtr(instance, 0x20)) {
+          gCurrentLightSwitch = instance;
+     }
+
+     if (oLightSwitchStart) {
+          oLightSwitchStart(instance, methodInfo);
+     }
+}
