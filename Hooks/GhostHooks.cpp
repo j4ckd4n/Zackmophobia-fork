@@ -61,6 +61,8 @@ void Hooks::hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInt
 
     if (state == GHOST_STATE_HUNTING) {
         Logger::Log("[GHOST] ChangeState -> HUNTING (bParam2=%s, photonInteract=%p)", bParam2 ? "true" : "false", photonInteract);
+    } else {
+        Logger::Log("[GHOST] ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
     }
 
     if (oGhostAI_ChangeState) {
@@ -144,6 +146,10 @@ void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
             if (currentName != lastGhost) {
                 printf("\n[GHOST][ID: %d] %s is a %s\n", typeIdx, currentName.c_str(), types[typeIdx]);
                 Logger::Log("[GHOST] %s is a %s", currentName.c_str(), types[typeIdx]);
+
+                Features::cGhostName = currentName.c_str();
+                Features::cGhostType = types[typeIdx];
+                Features::cGhostTypeId = typeIdx;
                 lastGhost = currentName;
             }
             break;

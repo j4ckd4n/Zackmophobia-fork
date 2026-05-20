@@ -42,7 +42,7 @@ namespace Menu {
         { "Infinite Stamina",  &Features::bStaminaEnabled },
         { "Speed Hack",        &Features::bSpeedEnabled },
         { "Ghost Type Display",&Features::bGhostTypeEnabled },
-        { "Force Tarot (Sun)",&Features::bForceTarot },
+        { "Force Tarot (Sun)", &Features::bForceTarot },
         { "Perfect Game",      &Features::bPerfectGame },
         { "Bonus Reward",      &Features::bBonusReward },
         { "No Kick",           &Features::bNoKick },
@@ -115,39 +115,61 @@ namespace Menu {
         ImGui::TextUnformatted("HOME toggles the overlay");
         ImGui::Separator();
 
-        ImGui::Columns(2, "feature_columns", false);
-        for (size_t i = 0; i < ITEM_COUNT; ++i) {
-            ImGui::Checkbox(s_items[i].label, s_items[i].state);
-        }
-        ImGui::NextColumn();
-
-        ImGui::TextUnformatted("Actions");
-        if (ImGui::Button("Force Hunt", ImVec2(-1.0f, 34.0f))) {
-            Features::bForceHunting = true;
-            Logger::Log("[MENU] Force Hunt requested.");
-        }
-        ImGui::Spacing();
-        ImGui::SliderFloat("Sprint Value", &Features::fSprintValue, 0.5f, 20.0f, "%.1f");
-        ImGui::Spacing();
-
         ImGui::Text("Player Position: %.2f, %.2f, %.2f", Features::cPlayerPos[0], Features::cPlayerPos[1], Features::cPlayerPos[2]);
         ImGui::Text("Source: %s", Features::cPlayerPosSource ? Features::cPlayerPosSource : "N/A");
         ImGui::Separator();
 
-        ImGui::TextUnformatted("Recent Logs");
-        ImGui::BeginChild("log_panel", ImVec2(0.0f, 220.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
-        std::vector<std::string> logs;
-        {
-            std::lock_guard<std::mutex> lock(Logger::gMutex);
-            logs.assign(Logger::gLogLines.begin(), Logger::gLogLines.end());
+        if (ImGui::BeginTabBar("Mods")) {
+            if (ImGui::BeginTabItem("All Mods")) {
+                if (ImGui::CollapsingHeader("Features")) {
+                    for (size_t i = 0; i < ITEM_COUNT; ++i) {
+                        ImGui::Checkbox(s_items[i].label, s_items[i].state);
+                    }
+                }
+
+                if (ImGui::CollapsingHeader("Actions")) {
+                    ImGui::TextUnformatted("Force Hunt will trigger the ghost's hunting state on the next update.");
+                    if (ImGui::Button("Force Hunt", ImVec2(-1.0f, 34.0f))) {
+                        Features::bForceHunting = true;
+                        Logger::Log("[MENU] Force Hunt requested.");
+                    }
+                }
+                
+                if (ImGui::CollapsingHeader("Player Modifiers")) {
+                    ImGui::TextUnformatted("Sprint Value controls the multiplier for player sprint speed. Default is 6.0x.");
+                    ImGui::SliderFloat("Sprint Value", &Features::fSprintValue, 0.5f, 20.0f, "%.1f");
+                }
+
+                if (ImGui::CollapsingHeader("Logs", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextUnformatted("Recent log messages from the game will appear here.");
+                    ImGui::BeginChild("log_panel", ImVec2(0.0f, 220.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+                    std::vector<std::string> logs;
+                    {
+                        std::lock_guard<std::mutex> lock(Logger::gMutex);
+                        logs.assign(Logger::gLogLines.begin(), Logger::gLogLines.end());
+                    }
+                    for (const auto& line : logs) {
+                        ImGui::TextUnformatted(line.c_str());
+                    }
+                    ImGui::EndChild();
+                }
+
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Ghost Info")) {
+                ImGui::TextUnformatted("This tab should populate once the map is loaded.");
+                ImGui::Separator();
+                ImGui::Text("Ghost Type: %s", Features::cGhostType ? Features::cGhostType : "N/A");
+                ImGui::Text("Ghost Name: %s", Features::cGhostName ? Features::cGhostName : "N/A");
+                ImGui::Text("Ghost Type ID: %d", Features::cGhostTypeId);
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
-        for (const auto& line : logs) {
-            ImGui::TextUnformatted(line.c_str());
-        }
-        ImGui::EndChild();
 
         ImGui::End();
-        ImGui::Columns(1);
     }
 
     static void ShutdownImGui()
