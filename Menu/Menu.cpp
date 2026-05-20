@@ -164,6 +164,16 @@ namespace Menu {
                 ImGui::Text("Ghost Name: %s", Features::cGhostName ? Features::cGhostName : "N/A");
                 ImGui::Text("Ghost Type ID: %d", Features::cGhostTypeId);
                 ImGui::Text("Ghost State: %s", Features::cGhostState ? Features::cGhostState : "N/A");
+
+                ImGui::SeparatorText("Ghost Position");
+                ImGui::Text("Position: %.2f, %.2f, %.2f", Features::cGhostPos[0], Features::cGhostPos[1], Features::cGhostPos[2]);
+                ImGui::Text("Source: %s", Features::cGhostPosSource ? Features::cGhostPosSource : "N/A");
+
+                ImGui::SeparatorText("Historical States");
+                for (int i = 0; i < 10; i++) {
+                    ImGui::Text("%d: %s", i, Features::cHistoricalStates[i] ? Features::cHistoricalStates[i] : "N/A");
+                }
+
                 ImGui::EndTabItem();
             }
 

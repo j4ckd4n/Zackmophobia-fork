@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdio.h>
+#include <cmath>
 #include <string>
 #include "Hooks.h"
 #include "../SDK/IL2CPP.h"
@@ -14,6 +15,82 @@ namespace {
     constexpr int32_t GHOST_STATE_DOOR_INTERACT = 5; // photonInteract is used.
     constexpr int32_t GHOST_STATE_INTERACT_OBJECT = 6; // photonInteract is used.
     constexpr int32_t GHOST_STATE_LAUGHING = 14;
+
+    typedef struct {
+        int32_t state;
+        void* photonInteract;
+        const char* name;
+    } Ghost_State;
+
+    Ghost_State stateMap[] = {
+        {0, nullptr, "Idle"},
+        {1, nullptr, "Wander"},
+        {2, nullptr, "Hunting"},
+        {3, nullptr, "Favorite Room"},
+        {4, nullptr, "Light Switch"},
+        {5, nullptr, "Door Interact"},
+        {6, nullptr, "Thrown Object"},
+        {7, nullptr, "Fusebox Interaction"},
+        {8, nullptr, "Appeared"},
+        {9, nullptr, "Door Knock"},
+        {10, nullptr, "Window Knock"},
+        {11, nullptr, "Car Alarm"},
+        {12, nullptr, "Flicker"},
+        {13, nullptr, "CCTV"},
+        {14, nullptr, "Random Event"},
+        {15, nullptr, "Used Ghost Ability"},
+        {16, nullptr, "Mannequin Interaction"},
+        {17, nullptr, "Teleported Object"},
+        {18, nullptr, "Interaction"},
+        {19, nullptr, "At Summoning Circle"},
+        {20, nullptr, "Following Music Box"},
+        {21, nullptr, "Triggered DOTS"},
+        {22, nullptr, "Interacted with salt"},
+        {23, nullptr, "Ignite"},
+    };
+
+    inline bool IsFinite3(const Hooks::Vector3& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    }
+
+    // Reject obviously bogus vectors to avoid logging random memory as world position.
+    inline bool LooksLikeWorldPos(const Hooks::Vector3& v) {
+        if (!IsFinite3(v)) return false;
+        const float MAX_REASONABLE = 100000.0f;
+        return (fabsf(v.x) < MAX_REASONABLE && fabsf(v.y) < MAX_REASONABLE && fabsf(v.z) < MAX_REASONABLE);
+    }
+
+    bool TryReadVec3At(void* base, size_t offset, Hooks::Vector3& out) {
+        if (!base) return false;
+        return SDK::ReadSafe((char*)base + offset, out) && LooksLikeWorldPos(out);
+    }
+
+    bool TryGetPosition(void* ghostAIInstance, Hooks::Vector3& out, const char*& source) {
+        source = "none";
+        if (!SDK::IsReadable(ghostAIInstance, 0x20)) return false;
+
+        // try transform path first
+        if (Hooks::oGetTransform && Hooks::oGetPosition) {
+            __try {
+                void* transform = Hooks::oGetTransform(ghostAIInstance, nullptr);
+                if (SDK::IsReadable(transform, 0x20)) {
+                    // On x64 IL2CPP, Vector3 can be returned through an explicit out pointer in many builds.
+                    Hooks::Vector3 pos{};
+                    Hooks::oGetPosition(&pos, transform, nullptr);
+                    if (LooksLikeWorldPos(pos)) {
+                        out = pos;
+                        source = "unity:get_position";
+                        return true;
+                    }
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                // Signature/layout mismatches are common across Unity versions.
+            }
+        }
+
+        return false;
+    }
 }
 
 void Hooks::ForceHunting()
@@ -65,32 +142,25 @@ void Hooks::hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInt
         gCurrentGhostAI = (GhostAI_o*)instance;
     }
 
-    switch(state) {
-        case GHOST_STATE_IDLE:
-            Features::cGhostState = "Idle";
+    const char* stateName = "Unknown";
+    for (const auto& entry : stateMap) {
+        if (entry.state == state) {
+            stateName = entry.name;
             break;
-        case GHOST_STATE_HUNTING:
-            Features::cGhostState = "Hunting";
-            break;
-        case GHOST_STATE_ROAM:
-            Features::cGhostState = "Roam";
-            break;
-        case GHOST_STATE_LIGHT_SWITCH:
-            Features::cGhostState = "LightSwitch";
-            break;
-        case GHOST_STATE_DOOR_INTERACT:
-            Features::cGhostState = "DoorInteract";
-            break;
-        case GHOST_STATE_INTERACT_OBJECT:
-            Features::cGhostState = "ObjectInteract";
-            break;
-        case GHOST_STATE_LAUGHING:
-            Features::cGhostState = "Laughing";
-            break;
-        default:
-            Logger::Log("[GHOST] ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
-            Features::cGhostState = "Unknown";
+        }
     }
+
+    if (stateName != "Unknown") {
+        Features::cGhostState = const_cast<char*>(stateName);
+    } else {
+        Logger::Log("[GHOST] Unknown ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
+    }
+
+    // add to historical states buffer
+    for (int i = 9; i > 0; i--) {
+        Features::cHistoricalStates[i] = Features::cHistoricalStates[i - 1];
+    }
+    Features::cHistoricalStates[0] = stateName;
 
     if (oGhostAI_ChangeState) {
         oGhostAI_ChangeState(instance, state, photonInteract, bParam2, methodInfo);
@@ -119,19 +189,6 @@ void Hooks::hkGhostAI_Init(void* instance, GhostData_o* data, void* methodInfo)
 
         Logger::Log("[GHOST INIT] Ghost Type: %d, %d", fields->ghostTypeId1, fields->ghostTypeId2);
         Logger::Log("[GHOST INIT] Ghost Type: %s", types[fields->ghostTypeId2]);
-
-        // Display all fields
-        // printf("\n[GHOST DATA] Ghost Type 1: %d\n", fields->ghostTypeId1);
-        // printf("[GHOST DATA] Ghost Type 2: %d\n", fields->ghostTypeId2);
-        // printf("[GHOST DATA] Unknown Int 1: %d\n", fields->unkInt1);
-        // printf("[GHOST DATA] Unknown String 1: %s\n", SDK::IL2CPP_To_String(fields->string).c_str());
-        // printf("[GHOST DATA] Unknown Int 2: %d\n", fields->unkInt2);
-        // printf("[GHOST DATA] Unknown Int 3: %d\n", fields->unkInt3);
-        // printf("[GHOST DATA] Unknown Int 4: %d\n", fields->unkInt4);
-        // printf("[GHOST DATA] Unknown Int 5: %d\n", fields->unkInt5);
-        // printf("[GHOST DATA] Unknown Bool 1: %s\n", fields->unkBool1 ? "true" : "false");
-        // printf("[GHOST DATA] Unknown Bool 2: %s\n", fields->unkBool2 ? "true" : "false");
-        // printf("[GHOST DATA] Unknown Bool 3: %s\n", fields->unkBool3 ? "true" : "false");
     }
 
     oGhostAI_Init(instance, data, methodInfo);
@@ -151,37 +208,51 @@ void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
     }
 
     if (Features::bGhostTypeEnabled && instance && !IsBadReadPtr(instance, 0x200)) {
-    static std::string lastGhost = "";
-        void** fields = (void**)instance;
 
-        // Scan memory for the ghost's name string
-    for (int i = 0; i < 100; i++) {
-        std::string currentName = SDK::IL2CPP_To_String(fields[i]);
-        if (!currentName.empty()) {
-            // Find ghost type ID (usually an integer between 0-27)
-            int typeIdx = 0;
-            int* intFields = (int*)instance;
-            for (int j = 0; j < 64; j++) {
-                if (intFields[j] > 0 && intFields[j] <= 29) {
-                    typeIdx = intFields[j];
-                    break;
-                }
+        static int sampleTick = 0;
+        if ((++sampleTick % 60) == 0) { // Don't spam every frame, check periodically as ghost spawns and types are stable.
+            Hooks::Vector3 pos{};
+            const char* source = nullptr;
+            if (TryGetPosition(instance, pos, source)) {
+                Features::cGhostPosSource = const_cast<char*>(source);
+                Features::cGhostPos[0] = pos.x;
+                Features::cGhostPos[1] = pos.y;
+                Features::cGhostPos[2] = pos.z;
+                Logger::Log("[GHOST] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
             }
-
-            const char* types[] = { "Spirit", "Wraith", "Phantom", "Poltergeist", "Banshee", "Jinn", "Mare", "Revenant", "Shade", "Demon", "Yurei", "Oni", "Yokai", "Hantu", "Goryo", "Myling", "Onryo", "The Twins", "Raiju", "Obake", "Mimic", "Moroi", "Deogen", "Thaye", "None", "Gallu", "Dayan", "Obambo", "Aswang", "Kormos"};
-
-            if (currentName != lastGhost) {
-                printf("\n[GHOST][ID: %d] %s is a %s\n", typeIdx, currentName.c_str(), types[typeIdx]);
-                Logger::Log("[GHOST] %s is a %s", currentName.c_str(), types[typeIdx]);
-
-                Features::cGhostName = currentName.c_str();
-                Features::cGhostType = types[typeIdx];
-                Features::cGhostTypeId = typeIdx;
-                lastGhost = currentName;
-            }
-            break;
         }
-    }
+
+        static std::string lastGhost = "";
+            void** fields = (void**)instance;
+
+            // Scan memory for the ghost's name string
+        for (int i = 0; i < 100; i++) {
+            std::string currentName = SDK::IL2CPP_To_String(fields[i]);
+            if (!currentName.empty()) {
+                // Find ghost type ID (usually an integer between 0-27)
+                int typeIdx = 0;
+                int* intFields = (int*)instance;
+                for (int j = 0; j < 64; j++) {
+                    if (intFields[j] > 0 && intFields[j] <= 29) {
+                        typeIdx = intFields[j];
+                        break;
+                    }
+                }
+
+                const char* types[] = { "Spirit", "Wraith", "Phantom", "Poltergeist", "Banshee", "Jinn", "Mare", "Revenant", "Shade", "Demon", "Yurei", "Oni", "Yokai", "Hantu", "Goryo", "Myling", "Onryo", "The Twins", "Raiju", "Obake", "Mimic", "Moroi", "Deogen", "Thaye", "None", "Gallu", "Dayan", "Obambo", "Aswang", "Kormos"};
+
+                if (currentName != lastGhost) {
+                    printf("\n[GHOST][ID: %d] %s is a %s\n", typeIdx, currentName.c_str(), types[typeIdx]);
+                    Logger::Log("[GHOST] %s is a %s", currentName.c_str(), types[typeIdx]);
+
+                    Features::cGhostName = currentName.c_str();
+                    Features::cGhostType = types[typeIdx];
+                    Features::cGhostTypeId = typeIdx;
+                    lastGhost = currentName;
+                }
+                break;
+            }
+        }
     }
     oGhostUpdate(instance, methodInfo);
 }
