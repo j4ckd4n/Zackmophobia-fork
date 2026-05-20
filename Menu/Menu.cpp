@@ -29,7 +29,7 @@ namespace Menu {
 
     static constexpr int ITEM_COUNT = sizeof(s_items) / sizeof(s_items[0]);
     // Row where the log panel starts: header(1) + blank(1) + items + blank(1) + speed(1) + blank(1) + separator(1) + blank(1)
-    static constexpr int LOG_ROW_START = 2 + ITEM_COUNT + 5;
+    static constexpr int LOG_ROW_START = 3 + ITEM_COUNT + 4;
     static constexpr int LOG_COL_WIDTH = 80;
 
     static void SetCursorPos(int x, int y) {
@@ -58,6 +58,13 @@ namespace Menu {
 
     static void DrawLog() {
         std::lock_guard<std::mutex> lock(Logger::gMutex);
+
+        // draw player position first
+        SetCursorPos(0, LOG_ROW_START - 1);
+        printf("Player Position: X=%.2f Y=%.2f Z=%.2f (Source: %s)                    \n",
+            Features::cPlayerPos[0], Features::cPlayerPos[1], Features::cPlayerPos[2],
+            Features::cPlayerPosSource ? Features::cPlayerPosSource : "N/A");
+
         int row = LOG_ROW_START;
         for (const auto& line : Logger::gLogLines) {
             SetCursorPos(0, row);

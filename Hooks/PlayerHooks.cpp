@@ -92,6 +92,19 @@ namespace Hooks {
                loggedSpeed = true;
           }
 
+          static int sampleTick = 0;
+          if ((++sampleTick % 120) == 0) {
+               Vector3 pos{};
+               const char* source = nullptr;
+               if (TryGetFPCPosition(instance, pos, source)) {
+                    Features::cPlayerPosSource = const_cast<char*>(source);
+                    Features::cPlayerPos[0] = pos.x;
+                    Features::cPlayerPos[1] = pos.y;
+                    Features::cPlayerPos[2] = pos.z;
+                    // Logger::Log("[FPC] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
+               }
+          }
+
           if (Features::bSpeedEnabled && instance && !IsBadReadPtr(instance, 0x200)) 
           {
                // Named indices for clarity and safer writes
@@ -112,15 +125,6 @@ namespace Hooks {
                setMovement(WALK_SPEED_IDX, Features::fSprintValue); // Walk Speed
                setMovement(RUN_SPEED_IDX, Features::fSprintValue); // Run Speed
                setMovement(SPRINT_SPEED_IDX, Features::fSprintValue); // Sprint Speed
-
-               static int sampleTick = 0;
-               if ((++sampleTick % 120) == 0) {
-                    Vector3 pos{};
-                    const char* source = nullptr;
-                    if (TryGetFPCPosition(instance, pos, source)) {
-                         Logger::Log("[FPC] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
-                    }
-               }
           }
 
           oFPCUpdate(instance, methodInfo); // Call original game code
