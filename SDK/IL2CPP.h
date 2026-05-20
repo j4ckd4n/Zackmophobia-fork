@@ -26,7 +26,7 @@ namespace SDK {
      {
           if (!ptr || (uintptr_t)ptr < 0x10000 || IsBadReadPtr(ptr, 0x18)) return "";
           int32_t length = *(int32_t*)((char*)ptr + 0x10);
-          if (length <= 0 || length > 32) return "";
+          if (length <= 0 || length > 512) return "";
           wchar_t* raw = (wchar_t*)((char*)ptr + 0x14);
           if (IsBadReadPtr(raw, length * 2)) return "";
           std::wstring ws(raw, length);
