@@ -1,150 +1,281 @@
 #include <windows.h>
-#include <stdio.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <thread>
+#include <vector>
+#include <string>
 #include <algorithm>
+
 #include "Menu.h"
 #include "../Features/Features.h"
 #include "../Hooks/Hooks.h"
 #include "../Utils/Logger.h"
+#include "../kiero/kiero.h"
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_dx11.h"
+#include "imgui/imgui_impl_win32.h"
+#include "../Hooks/detours.h"
+
+#pragma comment(lib, "../Lib/detours.lib")
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace Menu {
+    using Present_t = HRESULT(__stdcall*)(IDXGISwapChain*, UINT, UINT);
+
+    static Present_t oPresent = nullptr;
+    static HWND gWindow = nullptr;
+    static WNDPROC gOriginalWndProc = nullptr;
+    static ID3D11Device* gDevice = nullptr;
+    static ID3D11DeviceContext* gContext = nullptr;
+    static ID3D11RenderTargetView* gRenderTargetView = nullptr;
+    static bool gImGuiInitialized = false;
+    static bool gMenuVisible = true;
+    static bool gHookInstalled = false;
 
     struct MenuItem {
         const char* label;
         bool* state;
-        bool isAction; // if true, triggers once on Enter instead of toggling
     };
 
     static MenuItem s_items[] = {
-        { "Infinite Stamina",  &Features::bStaminaEnabled,   false },
-        { "Speed Hack",        &Features::bSpeedEnabled,      false },
-        { "Ghost Type Display",&Features::bGhostTypeEnabled,  false },
-        { "Force Tarot (Sun)", &Features::bForceTarot,        false },
-        { "Perfect Game",      &Features::bPerfectGame,       false },
-        { "Bonus Reward",      &Features::bBonusReward,       false },
-        { "No Kick",           &Features::bNoKick,            false },
-        { "No Sanity Loss",    &Features::bNoSanityLoss,      false },
-        { "Force Hunt [ACTION]",&Features::bForceHunting,     true  }, // Does not work yet. Need to intercept how the calls are made. ChangeState & Hunting are some prime candidates
+        { "Infinite Stamina",  &Features::bStaminaEnabled },
+        { "Speed Hack",        &Features::bSpeedEnabled },
+        { "Ghost Type Display",&Features::bGhostTypeEnabled },
+        { "Force Tarot (Sun)",&Features::bForceTarot },
+        { "Perfect Game",      &Features::bPerfectGame },
+        { "Bonus Reward",      &Features::bBonusReward },
+        { "No Kick",           &Features::bNoKick },
+        { "No Sanity Loss",    &Features::bNoSanityLoss },
     };
 
-    static constexpr int ITEM_COUNT = sizeof(s_items) / sizeof(s_items[0]);
-    // Row where the log panel starts: header(1) + blank(1) + items + blank(1) + speed(1) + blank(1) + separator(1) + blank(1)
-    static constexpr int LOG_ROW_START = 3 + ITEM_COUNT + 4;
-    static constexpr int LOG_COL_WIDTH = 80;
+    static constexpr size_t ITEM_COUNT = sizeof(s_items) / sizeof(s_items[0]);
 
-    static void SetCursorPos(int x, int y) {
-        COORD c = { (SHORT)x, (SHORT)y };
-        SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
-    }
-
-    static void HideCursor() {
-        CONSOLE_CURSOR_INFO ci = { 1, FALSE };
-        SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &ci);
-    }
-
-    static void DrawMenu(int selected) {
-        SetCursorPos(0, 0);
-        printf("=== Zackmophobia Menu (UP/DOWN = navigate, ENTER = toggle, + = speed+, - = speed-) ===\n\n");
-        for (int i = 0; i < ITEM_COUNT; i++) {
-            const char* tag = s_items[i].isAction ? "ACT" : (*s_items[i].state ? "ON " : "OFF");
-            if (i == selected)
-                printf(" >> [%s] %-40s <<\n", tag, s_items[i].label);
-            else
-                printf("    [%s] %-40s\n",    tag, s_items[i].label);
-        }
-        printf("\n    Speed Value: %.1f\n\n", Features::fSprintValue);
-        printf("--- Log -----------------------------------------------------------------------\n\n");
-    }
-
-    static void DrawLog() {
-        std::lock_guard<std::mutex> lock(Logger::gMutex);
-
-        // draw player position first
-        SetCursorPos(0, LOG_ROW_START - 1);
-        printf("Player Position: X=%.2f Y=%.2f Z=%.2f (Source: %s)                    \n",
-            Features::cPlayerPos[0], Features::cPlayerPos[1], Features::cPlayerPos[2],
-            Features::cPlayerPosSource ? Features::cPlayerPosSource : "N/A");
-
-        int row = LOG_ROW_START;
-        for (const auto& line : Logger::gLogLines) {
-            SetCursorPos(0, row);
-            printf("%-*s", LOG_COL_WIDTH, line.c_str());
-            ++row;
-        }
-        // Erase any leftover lines from previous (longer) log state
-        for (int r = row; r < LOG_ROW_START + Logger::MAX_LOG_LINES; ++r) {
-            SetCursorPos(0, r);
-            printf("%-*s", LOG_COL_WIDTH, "");
+    static void CleanupRenderTarget()
+    {
+        if (gRenderTargetView) {
+            gRenderTargetView->Release();
+            gRenderTargetView = nullptr;
         }
     }
 
-    static void MenuThread() {
-        HideCursor();
-        // Increase console buffer and window size to reduce flicker when many log lines are printed.
-        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (hOut != INVALID_HANDLE_VALUE) {
-            CONSOLE_SCREEN_BUFFER_INFO csbi;
-            if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
-                COORD newSize = csbi.dwSize;
-                newSize.X = std::max<SHORT>(newSize.X, (SHORT)LOG_COL_WIDTH);
-                newSize.Y = std::max<SHORT>(newSize.Y, (SHORT)1000); // large buffer for logs
-                SetConsoleScreenBufferSize(hOut, newSize);
+    static void CreateRenderTarget(IDXGISwapChain* swapChain)
+    {
+        if (gRenderTargetView || !swapChain || !gDevice) {
+            return;
+        }
 
-                COORD largest = GetLargestConsoleWindowSize(hOut);
-                SHORT winH = (SHORT)std::min<int>(largest.Y, 60); // visible window height
-                SMALL_RECT window = { 0, 0, (SHORT)(newSize.X - 1), (SHORT)(winH - 1) };
-                SetConsoleWindowInfo(hOut, TRUE, &window);
+        ID3D11Texture2D* backBuffer = nullptr;
+        if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer)) && backBuffer) {
+            gDevice->CreateRenderTargetView(backBuffer, nullptr, &gRenderTargetView);
+            backBuffer->Release();
+        }
+    }
+
+    static void ApplyStyle()
+    {
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 10.0f;
+        style.FrameRounding = 8.0f;
+        style.ScrollbarRounding = 8.0f;
+        style.GrabRounding = 8.0f;
+        style.WindowPadding = ImVec2(14.0f, 14.0f);
+        style.FramePadding = ImVec2(10.0f, 6.0f);
+        style.ItemSpacing = ImVec2(10.0f, 8.0f);
+        style.WindowBorderSize = 0.0f;
+
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.07f, 0.09f, 0.96f);
+        colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.10f, 0.13f, 1.00f);
+        colors[ImGuiCol_TitleBgActive] = ImVec4(0.10f, 0.13f, 0.17f, 1.00f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.13f, 0.15f, 0.19f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.21f, 0.26f, 1.00f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.20f, 0.24f, 0.30f, 1.00f);
+        colors[ImGuiCol_CheckMark] = ImVec4(0.25f, 0.75f, 0.62f, 1.00f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.25f, 0.75f, 0.62f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.17f, 0.62f, 0.50f, 1.00f);
+        colors[ImGuiCol_Button] = ImVec4(0.18f, 0.20f, 0.25f, 1.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.30f, 0.37f, 1.00f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.16f, 0.18f, 0.23f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(0.18f, 0.21f, 0.26f, 1.00f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.24f, 0.28f, 0.34f, 1.00f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.18f, 0.21f, 0.26f, 1.00f);
+    }
+
+    static void DrawMenuWindow()
+    {
+        ImGui::SetNextWindowSize(ImVec2(560.0f, 620.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowBgAlpha(0.96f);
+
+        if (!ImGui::Begin("Zackmophobia", &gMenuVisible, ImGuiWindowFlags_NoCollapse)) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::TextUnformatted("HOME toggles the overlay");
+        ImGui::Separator();
+
+        ImGui::Columns(2, "feature_columns", false);
+        for (size_t i = 0; i < ITEM_COUNT; ++i) {
+            ImGui::Checkbox(s_items[i].label, s_items[i].state);
+        }
+        ImGui::NextColumn();
+
+        ImGui::TextUnformatted("Actions");
+        if (ImGui::Button("Force Hunt", ImVec2(-1.0f, 34.0f))) {
+            Features::bForceHunting = true;
+            Logger::Log("[MENU] Force Hunt requested.");
+        }
+        ImGui::Spacing();
+        ImGui::SliderFloat("Sprint Value", &Features::fSprintValue, 0.5f, 20.0f, "%.1f");
+        ImGui::Spacing();
+
+        ImGui::Text("Player Position: %.2f, %.2f, %.2f", Features::cPlayerPos[0], Features::cPlayerPos[1], Features::cPlayerPos[2]);
+        ImGui::Text("Source: %s", Features::cPlayerPosSource ? Features::cPlayerPosSource : "N/A");
+        ImGui::Separator();
+
+        ImGui::TextUnformatted("Recent Logs");
+        ImGui::BeginChild("log_panel", ImVec2(0.0f, 220.0f), true, ImGuiWindowFlags_HorizontalScrollbar);
+        std::vector<std::string> logs;
+        {
+            std::lock_guard<std::mutex> lock(Logger::gMutex);
+            logs.assign(Logger::gLogLines.begin(), Logger::gLogLines.end());
+        }
+        for (const auto& line : logs) {
+            ImGui::TextUnformatted(line.c_str());
+        }
+        ImGui::EndChild();
+
+        ImGui::End();
+        ImGui::Columns(1);
+    }
+
+    static void ShutdownImGui()
+    {
+        if (!gImGuiInitialized) {
+            return;
+        }
+
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        CleanupRenderTarget();
+
+        if (gOriginalWndProc && gWindow) {
+            SetWindowLongPtr(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOriginalWndProc));
+            gOriginalWndProc = nullptr;
+        }
+
+        if (gContext) {
+            gContext->Release();
+            gContext = nullptr;
+        }
+
+        if (gDevice) {
+            gDevice->Release();
+            gDevice = nullptr;
+        }
+
+        gImGuiInitialized = false;
+    }
+
+    static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    {
+        if (gImGuiInitialized && gMenuVisible) {
+            if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
+                return TRUE;
             }
         }
 
-        system("cls");
+        if (gOriginalWndProc) {
+            return CallWindowProc(gOriginalWndProc, hWnd, msg, wParam, lParam);
+        }
 
-        int selected = 0;
-        DrawMenu(selected);
-        DrawLog();
+        return DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+
+    static HRESULT __stdcall hkPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
+    {
+        if (!gImGuiInitialized && swapChain) {
+            DXGI_SWAP_CHAIN_DESC desc{};
+            if (SUCCEEDED(swapChain->GetDesc(&desc))) {
+                gWindow = desc.OutputWindow;
+            }
+
+            if (gWindow && SUCCEEDED(swapChain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&gDevice))) && gDevice) {
+                gDevice->GetImmediateContext(&gContext);
+                CreateRenderTarget(swapChain);
+
+                IMGUI_CHECKVERSION();
+                ImGui::CreateContext();
+                ImGuiIO& io = ImGui::GetIO();
+                io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+                io.IniFilename = nullptr;
+                ApplyStyle();
+
+                ImGui_ImplWin32_Init(gWindow);
+                ImGui_ImplDX11_Init(gDevice, gContext);
+
+                gOriginalWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtr(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WndProc)));
+                gImGuiInitialized = true;
+                Logger::Log("[SYSTEM] ImGui overlay initialized.");
+            }
+        }
+
+        if (gImGuiInitialized) {
+            if (GetAsyncKeyState(VK_HOME) & 1) {
+                gMenuVisible = !gMenuVisible;
+            }
+
+            if (gMenuVisible) {
+                if (!gRenderTargetView) {
+                    CreateRenderTarget(swapChain);
+                }
+
+                ImGui_ImplDX11_NewFrame();
+                ImGui_ImplWin32_NewFrame();
+                ImGui::NewFrame();
+                DrawMenuWindow();
+                ImGui::Render();
+
+                gContext->OMSetRenderTargets(1, &gRenderTargetView, nullptr);
+                ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            }
+        }
+
+        return oPresent ? oPresent(swapChain, syncInterval, flags) : S_OK;
+    }
+
+    static void OverlayThread()
+    {
+        Logger::Log("[SYSTEM] Waiting for D3D11 renderer.");
 
         while (true) {
-            bool redrawMenu = false;
+            if (kiero::init(kiero::RenderType::D3D11) == kiero::Status::Success) {
+                auto methods = kiero::getMethodsTable();
+                if (methods && methods[8]) {
+                    oPresent = reinterpret_cast<Present_t>(methods[8]);
 
-            if (GetAsyncKeyState(VK_UP) & 1) {
-                selected = (selected - 1 + ITEM_COUNT) % ITEM_COUNT;
-                redrawMenu = true;
-            }
-            if (GetAsyncKeyState(VK_DOWN) & 1) {
-                selected = (selected + 1) % ITEM_COUNT;
-                redrawMenu = true;
-            }
-            if (GetAsyncKeyState(VK_RETURN) & 1) {
-                if (s_items[selected].isAction) {
-                    Features::bForceHunting = true;
-                    Logger::Log("[MENU] Force Hunt requested.");
-                } else {
-                    *s_items[selected].state = !*s_items[selected].state;
-                    Logger::Log("[MENU] %s: %s", s_items[selected].label, *s_items[selected].state ? "ON" : "OFF");
+                    DetourTransactionBegin();
+                    DetourUpdateThread(GetCurrentThread());
+                    DetourAttach(reinterpret_cast<PVOID*>(&oPresent), hkPresent);
+                    if (DetourTransactionCommit() == NO_ERROR) {
+                        gHookInstalled = true;
+                        Logger::Log("[SYSTEM] ImGui Present hook installed.");
+                        return;
+                    }
+
+                    Logger::Log("[ERROR] ImGui Present hook transaction failed.");
+                    return;
                 }
-                redrawMenu = true;
-            }
-            if (GetAsyncKeyState(VK_ADD) & 1) {
-                Features::fSprintValue += 0.5f;
-                redrawMenu = true;
-            }
-            if (GetAsyncKeyState(VK_SUBTRACT) & 1) {
-                Features::fSprintValue -= 0.5f;
-                if (Features::fSprintValue < 0.5f) Features::fSprintValue = 0.5f;
-                redrawMenu = true;
             }
 
-            // Always refresh log panel so hook-thread messages appear without corrupting the menu
-            DrawLog();
-
-            if (redrawMenu)
-                DrawMenu(selected);
-
-            Sleep(50);
+            Sleep(500);
         }
     }
 
-    void Start() {
-        std::thread(MenuThread).detach();
+    void Start()
+    {
+        std::thread(OverlayThread).detach();
     }
 }
