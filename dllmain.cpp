@@ -26,6 +26,9 @@ void MainThread()
      SDK::assembly_get_image = (SDK::il2cpp_assembly_get_image_t)GetProcAddress(gameAssembly, "il2cpp_assembly_get_image");
      SDK::class_from_name = (SDK::il2cpp_class_from_name_t)GetProcAddress(gameAssembly, "il2cpp_class_from_name");
      SDK::get_method = (SDK::il2cpp_class_get_method_from_name_t)GetProcAddress(gameAssembly, "il2cpp_class_get_method_from_name");
+     SDK::object_get_class = (SDK::il2cpp_object_get_class_t)GetProcAddress(gameAssembly, "il2cpp_object_get_class");
+     SDK::class_get_name = (SDK::il2cpp_class_get_name_t)GetProcAddress(gameAssembly, "il2cpp_class_get_name");
+     Logger::Log("[SYSTEM] SDK function pointers initialized.");
 
      // Start the hooking process
      Hooks::Init();
