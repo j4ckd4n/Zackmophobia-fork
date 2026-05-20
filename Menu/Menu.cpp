@@ -163,6 +163,7 @@ namespace Menu {
                 ImGui::Text("Ghost Type: %s", Features::cGhostType ? Features::cGhostType : "N/A");
                 ImGui::Text("Ghost Name: %s", Features::cGhostName ? Features::cGhostName : "N/A");
                 ImGui::Text("Ghost Type ID: %d", Features::cGhostTypeId);
+                ImGui::Text("Ghost State: %s", Features::cGhostState ? Features::cGhostState : "N/A");
                 ImGui::EndTabItem();
             }
 

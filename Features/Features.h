@@ -15,5 +15,6 @@ namespace Features {
     inline float cPlayerPos[3]; // updated every 120 ticks when FPCUpdate hook is active
     inline const char* cGhostName = nullptr; // set to current ghost's name when GhostTypeDisplay is enabled
     inline const char* cGhostType = nullptr; // set to current ghost's type when GhostTypeDisplay is enabled
-    inline int cGhostTypeId = -1; // set to current ghost's type ID (0-29) when GhostTypeDisplay is enabled
+    inline int cGhostTypeId = -1; // set to current ghost's type ID (0-29) when GhostTypeDisplay is enabled]
+    inline const char* cGhostState = nullptr; // set to current ghost's state (Idle, Hunting, etc.) when GhostTypeDisplay is enabled
 }

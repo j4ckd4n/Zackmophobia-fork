@@ -7,7 +7,13 @@
 #include "../Utils/Logger.h"
 
 namespace {
+    constexpr int32_t GHOST_STATE_IDLE = 0;
     constexpr int32_t GHOST_STATE_HUNTING = 2;
+    constexpr int32_t GHOST_STATE_ROAM = 3;
+    constexpr int32_t GHOST_STATE_LIGHT_SWITCH = 4; // photonInteract is used.
+    constexpr int32_t GHOST_STATE_DOOR_INTERACT = 5; // photonInteract is used.
+    constexpr int32_t GHOST_STATE_INTERACT_OBJECT = 6; // photonInteract is used.
+    constexpr int32_t GHOST_STATE_LAUGHING = 14;
 }
 
 void Hooks::ForceHunting()
@@ -59,10 +65,31 @@ void Hooks::hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInt
         gCurrentGhostAI = (GhostAI_o*)instance;
     }
 
-    if (state == GHOST_STATE_HUNTING) {
-        Logger::Log("[GHOST] ChangeState -> HUNTING (bParam2=%s, photonInteract=%p)", bParam2 ? "true" : "false", photonInteract);
-    } else {
-        Logger::Log("[GHOST] ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
+    switch(state) {
+        case GHOST_STATE_IDLE:
+            Features::cGhostState = "Idle";
+            break;
+        case GHOST_STATE_HUNTING:
+            Features::cGhostState = "Hunting";
+            break;
+        case GHOST_STATE_ROAM:
+            Features::cGhostState = "Roam";
+            break;
+        case GHOST_STATE_LIGHT_SWITCH:
+            Features::cGhostState = "LightSwitch";
+            break;
+        case GHOST_STATE_DOOR_INTERACT:
+            Features::cGhostState = "DoorInteract";
+            break;
+        case GHOST_STATE_INTERACT_OBJECT:
+            Features::cGhostState = "ObjectInteract";
+            break;
+        case GHOST_STATE_LAUGHING:
+            Features::cGhostState = "Laughing";
+            break;
+        default:
+            Logger::Log("[GHOST] ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
+            Features::cGhostState = "Unknown";
     }
 
     if (oGhostAI_ChangeState) {
