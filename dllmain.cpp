@@ -1,9 +1,15 @@
 #include <windows.h>
 #include <thread>
+#include <atomic>
 #include "SDK/IL2CPP.h"   
 #include "Hooks/Hooks.h" 
 #include "Menu/Menu.h"
 #include "Utils/Logger.h"
+
+namespace {
+     HMODULE gSelfModule = nullptr;
+     std::atomic<bool> gUnloadInProgress = false;
+}
 
 void MainThread() 
 {
@@ -37,8 +43,31 @@ void MainThread()
      Menu::Start();
 }
 
+void UnloadThread()
+{
+     // END hotkey: clean unload so the output DLL file is no longer locked.
+     while (!gUnloadInProgress.load()) {
+          if (GetAsyncKeyState(VK_END) & 1) {
+               gUnloadInProgress = true;
+               Logger::Log("[SYSTEM] Unload requested via END key.");
+
+               Menu::Shutdown();
+               Hooks::Shutdown();
+
+               FreeConsole();
+               FreeLibraryAndExitThread(gSelfModule, 0);
+          }
+          Sleep(100);
+     }
+}
+
 BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID res) 
 {
-     if (reason == DLL_PROCESS_ATTACH) std::thread(MainThread).detach();
+     if (reason == DLL_PROCESS_ATTACH) {
+          DisableThreadLibraryCalls(hMod);
+          gSelfModule = hMod;
+          std::thread(MainThread).detach();
+          std::thread(UnloadThread).detach();
+     }
      return TRUE;
 }

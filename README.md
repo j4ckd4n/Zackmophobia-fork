@@ -20,7 +20,6 @@ A high-performance C++ internal cheat for Phasmophobia. This project utilizes th
 - Console writes can accidentally overwrite previous log entries or merge entirely, causing confusion in the output.
 - "Infinite Sprint" can cause the game to crash.
 - During testing, there have been cases where the other player might experience your character lagging when utilizing the speed features.
-- The injection tool does not work as intented at this time, causing the game to crash. Recommend using a third-party tool for DLL injection.
 
 **🚀 Features**
 
@@ -93,7 +92,9 @@ A launcher helper source is included at:
 
 - `Launcher/LaunchWithDll.cpp`
 
-It uses Detours `DetourCreateProcessWithDllExW` to start a target executable with `Zackmophobia.dll` loaded at process start.
+It starts the game normally, waits until `GameAssembly.dll` is loaded, then injects `Zackmophobia.dll` using a remote `LoadLibraryW` call.
+
+This delayed injection avoids early-startup crashes that can happen when injecting too early in Unity startup.
 
 ### Compile helper quickly (x64 Developer PowerShell)
 
@@ -115,6 +116,41 @@ cl /EHsc /std:c++20 /Fe:Launcher\LaunchWithDll.exe Launcher\LaunchWithDll.cpp /I
 ```powershell
 Launcher\LaunchWithDll.exe "C:\Program Files (x86)\Steam\steamapps\common\Phasmophobia\Phasmophobia.exe" "D:\git\Zackmophobia\x64\Debug\Zackmophobia.dll"
 ```
+
+## Auto Injection Script
+
+To streamline rebuild + launch + inject, use:
+
+- `scripts/AutoInject.ps1`
+
+What it does:
+
+- Builds `TryAgainHook.sln` (`Debug|x64` by default)
+- Creates a timestamped shadow copy of `Zackmophobia.dll` under `x64/Injected/`
+- Starts the game through `LaunchWithDll.exe` with that copied DLL
+
+Using a shadow copy avoids build-output file lock issues because the game loads the copied DLL, not `x64/Debug/Zackmophobia.dll` directly.
+
+### Usage
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\AutoInject.ps1
+```
+
+Optional parameters:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\AutoInject.ps1 -Configuration Release
+powershell -ExecutionPolicy Bypass -File .\scripts\AutoInject.ps1 -SkipBuild
+powershell -ExecutionPolicy Bypass -File .\scripts\AutoInject.ps1 -GameExe "C:\Program Files (x86)\Steam\steamapps\common\Phasmophobia\Phasmophobia.exe"
+```
+
+### Recommended workflow
+
+1. Run `AutoInject.ps1`.
+2. Play/test.
+3. Press `END` to unload the currently injected DLL.
+4. Re-run `AutoInject.ps1` for the next iteration.
 
 ## Safety Fixes Applied
 
