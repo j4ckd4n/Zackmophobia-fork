@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <atomic>
 
 #include "Menu.h"
 #include "../Features/Features.h"
@@ -32,6 +33,7 @@ namespace Menu {
     static bool gImGuiInitialized = false;
     static bool gMenuVisible = true;
     static bool gHookInstalled = false;
+    static std::atomic<bool> gShutdownRequested = false;
 
     struct MenuItem {
         const char* label;
@@ -237,6 +239,10 @@ namespace Menu {
 
     static HRESULT __stdcall hkPresent(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
     {
+        if (gShutdownRequested.load()) {
+            return oPresent ? oPresent(swapChain, syncInterval, flags) : S_OK;
+        }
+
         if (!gImGuiInitialized && swapChain) {
             DXGI_SWAP_CHAIN_DESC desc{};
             if (SUCCEEDED(swapChain->GetDesc(&desc))) {
@@ -291,7 +297,7 @@ namespace Menu {
     {
         Logger::Log("[SYSTEM] Waiting for D3D11 renderer.");
 
-        while (true) {
+        while (!gShutdownRequested.load()) {
             if (kiero::init(kiero::RenderType::D3D11) == kiero::Status::Success) {
                 auto methods = kiero::getMethodsTable();
                 if (methods && methods[8]) {
@@ -317,6 +323,31 @@ namespace Menu {
 
     void Start()
     {
+        gShutdownRequested = false;
         std::thread(OverlayThread).detach();
+    }
+
+    void Shutdown()
+    {
+        if (gShutdownRequested.exchange(true)) {
+            return;
+        }
+
+        Logger::Log("[SYSTEM] Shutting down menu overlay.");
+
+        if (gHookInstalled && oPresent) {
+            DetourTransactionBegin();
+            DetourUpdateThread(GetCurrentThread());
+            DetourDetach(reinterpret_cast<PVOID*>(&oPresent), hkPresent);
+            if (DetourTransactionCommit() == NO_ERROR) {
+                Logger::Log("[SYSTEM] Present hook detached.");
+            } else {
+                Logger::Log("[ERROR] Present hook detach failed.");
+            }
+            gHookInstalled = false;
+        }
+
+        ShutdownImGui();
+        kiero::shutdown();
     }
 }

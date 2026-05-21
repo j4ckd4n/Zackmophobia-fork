@@ -89,6 +89,10 @@ namespace Hooks {
           void* mUnityGetPosition = getUnityMethod("UnityEngine", "Transform", "get_position", 0);
           Logger::Log("[UNITY] Transform.get_position %s", mUnityGetPosition ? "resolved" : "missing");
           
+          void* mEvidenceController_SpawnBoneDNAEvidence = getMethod("EvidenceController", "SpawnBoneDNAEvidence", 1);
+          if (mEvidenceController_SpawnBoneDNAEvidence) oEvidenceController_SpawnBoneDNAEvidence = *(EvidenceController_SpawnBoneDNAEvidence*)mEvidenceController_SpawnBoneDNAEvidence;
+          Logger::Log("[HOOK] EvidenceController.SpawnBoneDNAEvidence %s", mEvidenceController_SpawnBoneDNAEvidence ? "resolved" : "missing");
+
           void* mDNAEvidence_Spawn = getMethod("DNAEvidence", "Spawn", 1);
           if (mDNAEvidence_Spawn) oDNAEvidence_Spawn = *(DNAEvidence_Spawn_t*)mDNAEvidence_Spawn;
           Logger::Log("[HOOK] DNAEvidence.Spawn %s", mDNAEvidence_Spawn ? "resolved" : "missing");
@@ -109,6 +113,7 @@ namespace Hooks {
           if (oGhostAI_Init) DetourAttach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
           if (oGhostAI_ChangeState) DetourAttach(&(PVOID&)oGhostAI_ChangeState, hkGhostAI_ChangeState);
 
+          if (oEvidenceController_SpawnBoneDNAEvidence) DetourAttach(&(PVOID&)oEvidenceController_SpawnBoneDNAEvidence, hkEvidenceController_SpawnBoneDNAEvidence);
           if (oDNAEvidence_Spawn) DetourAttach(&(PVOID&)oDNAEvidence_Spawn, hkDNAEvidence_Spawn);
 
           oGetTransform = mUnityGetTransform ? *(GetTransform_t*)mUnityGetTransform : nullptr;
@@ -117,5 +122,33 @@ namespace Hooks {
           DetourTransactionCommit();
           printf("[SYSTEM] All Hooks Applied Successfully.\n");
           Logger::Log("[SYSTEM] Hook transaction committed.");
+     }
+
+     void Shutdown() {
+          Logger::Log("[SYSTEM] Detaching hooks.");
+
+          DetourTransactionBegin();
+          DetourUpdateThread(GetCurrentThread());
+
+          if (oStaminaUpdate) DetourDetach(&(PVOID&)oStaminaUpdate, hkStaminaUpdate);
+          if (oFPCUpdate) DetourDetach(&(PVOID&)oFPCUpdate, hkFPCUpdate);
+          if (oGhostUpdate) DetourDetach(&(PVOID&)oGhostUpdate, hkGhostUpdate);
+          if (oLightSwitchStart) DetourDetach(&(PVOID&)oLightSwitchStart, hkLightSwitchStart);
+          if (oSetCard) DetourDetach(&(PVOID&)oSetCard, hkSetCard);
+          if (oGetBonus) DetourDetach(&(PVOID&)oGetBonus, hkGetBonus);
+          if (oIsPerfect) DetourDetach(&(PVOID&)oIsPerfect, hkIsPerfect);
+          if (oServerManagerKickPlayerNetworked) DetourDetach(&(PVOID&)oServerManagerKickPlayerNetworked, hkKickPlayerNetworked);
+          if (oGetRewardAmount) DetourDetach(&(PVOID&)oGetRewardAmount, hkGetRewardAmount);
+          if (oChangeSanity) DetourDetach(&(PVOID&)oChangeSanity, hkChangeSanity);
+          if (oGhostAI_Init) DetourDetach(&(PVOID&)oGhostAI_Init, hkGhostAI_Init);
+          if (oGhostAI_ChangeState) DetourDetach(&(PVOID&)oGhostAI_ChangeState, hkGhostAI_ChangeState);
+          if (oEvidenceController_SpawnBoneDNAEvidence) DetourDetach(&(PVOID&)oEvidenceController_SpawnBoneDNAEvidence, hkEvidenceController_SpawnBoneDNAEvidence);
+          if (oDNAEvidence_Spawn) DetourDetach(&(PVOID&)oDNAEvidence_Spawn, hkDNAEvidence_Spawn);
+
+          if (DetourTransactionCommit() == NO_ERROR) {
+               Logger::Log("[SYSTEM] Hook detachment committed.");
+          } else {
+               Logger::Log("[ERROR] Hook detachment transaction failed.");
+          }
      }
 }

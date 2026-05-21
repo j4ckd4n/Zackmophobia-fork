@@ -48,6 +48,20 @@ namespace {
 
         return false;
     }
+
+    inline void* evidenceControllerFields = nullptr;
+}
+
+void Hooks::hkEvidenceController_SpawnBoneDNAEvidence(void* instance, void* levelRoom, void* methodInfo)
+{
+    if (!evidenceControllerFields) {
+        evidenceControllerFields = instance;
+        Logger::Log("[HOOK] EvidenceController.SpawnBoneDNAEvidence called. Instance pointer stored for later use.");
+    }
+
+    if (oEvidenceController_SpawnBoneDNAEvidence) {
+        oEvidenceController_SpawnBoneDNAEvidence(instance, levelRoom, methodInfo);
+    }
 }
 
 void Hooks::hkDNAEvidence_Spawn(void* instance, int32_t iParam1, void* methodInfo)
@@ -75,31 +89,11 @@ void Hooks::hkDNAEvidence_Spawn(void* instance, int32_t iParam1, void* methodInf
             }
         }
 
-        void* fields = SDK::GetFieldsPtr(instance);
-        if (SDK::IsReadable(fields, 0x70)) {
-            void* levelRoomObj = nullptr;
-            if (SDK::ReadSafe((char*)fields + 0x40, levelRoomObj)){
-                void* levelRoomFields = SDK::GetFieldsPtr(levelRoomObj);
-                if (SDK::IsReadable(levelRoomFields, 0x80)) {
-                    void* stringObj = nullptr;
-                    // this doesn't return anything. not sure if it's due to how the data is passed to the function, or somethinge else.
-                    if (SDK::ReadSafe((char*)levelRoomFields + 0x50, stringObj)) {
-                        std::string roomName = SDK::IL2CPP_To_String(stringObj);
-                        if (!roomName.empty()) {
-                            Logger::Log("[DNA] Spawn room name (fields+0x50): %s", roomName.c_str());
-                        } else {
-                            Logger::Log("[DNA] Spawn room name at fields+0x50 is empty.");
-                        }
-                    } else {
-                        Logger::Log("[DNA] Failed to read potential room name from fields+0x50");
-                    }
-                } else {
-                    Logger::Log("[DNA] LevelRoom object found but fields pointer is not readable.");
-                }
-            } else {
-                Logger::Log("[DNA] Failed to read LevelRoom from fields+0x40.");
-            }
-        }
+        // lets extract levelRoom_array from EvidenceController fields
+        void* evidenceControllerFields = SDK::GetFieldsPtr(instance);
+        Logger::Log("[DNA] eController fields pointer: %p", evidenceControllerFields);
+
+        // need to figure out a way to extract the room name from the parameter being passed.
     }
 
     if (oDNAEvidence_Spawn) {

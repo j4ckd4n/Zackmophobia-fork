@@ -83,7 +83,8 @@ namespace Hooks {
     typedef void (*GhostAI_ChangeState_t)(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
     typedef void (*SetupPlayer_t)(void* instance, void* methodInfo);
 
-    typedef void (*DNAEvidence_Spawn_t)(void* instance, int32_t iParam1, void* methodInfo);
+    typedef void (*EvidenceController_SpawnBoneDNAEvidence)(void* instance, void* levelRoom, void* methodInfo);
+    typedef void (*DNAEvidence_Spawn_t)(void* instance, int32_t roomId, void* methodInfo);
 
     // Unity typedefs
     struct Vector3 {
@@ -115,6 +116,7 @@ namespace Hooks {
     inline GhostAI_ChangeState_t oGhostAI_ChangeState = nullptr;
     inline SetupPlayer_t oSetupPlayer = nullptr;
 
+    inline EvidenceController_SpawnBoneDNAEvidence oEvidenceController_SpawnBoneDNAEvidence = nullptr;
     inline DNAEvidence_Spawn_t oDNAEvidence_Spawn = nullptr;
 
     // Unity function pointers (if needed for more complex hooks)
@@ -137,7 +139,9 @@ namespace Hooks {
     void hkLightSwitchStart(void* instance, void* methodInfo);
     void hkSetupPlayer(void* instance, void* methodInfo);
 
-    void hkDNAEvidence_Spawn(void* instance, int32_t iParam1, void* methodInfo);
+    void hkEvidenceController_SpawnBoneDNAEvidence(void* instance, void* levelRoom, void* methodInfo);
+    void hkDNAEvidence_Spawn(void* instance, int32_t roomId, void* methodInfo);
 
     void Init();
+    void Shutdown();
 }
