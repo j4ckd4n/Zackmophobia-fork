@@ -388,6 +388,7 @@ namespace {
     bool UpdatePickup(void* grab) {
         void* local = nullptr;
         void* camera = nullptr;
+        void* avatar = nullptr;
         bool allowed = false;
         __try {
             void* back = nullptr;
@@ -397,7 +398,7 @@ namespace {
                 SDK::object_get_class(local) == localPCClass &&
                 ReadField(local, 0x148, back) && back == grab &&
                 ReadField(local, 0x30, camera) && Alive(camera) &&
-                ReadField(local, 0x128, controller)) {
+                ReadField(local, 0x128, controller) && ReadField(local, 0x20, avatar)) {
                 Stamina::Observe(local);
                 allowed = !GhostControl::ControlsPlayer(controller);
             }
@@ -407,7 +408,7 @@ namespace {
             worldHealthy = false;
             Logger::Log("[ERROR] Pickup: local controller lookup faulted; pickup disabled.");
         }
-        Pickup::Update(camera, local, allowed, GhostControl::inputCaptured.load(), generation);
+        Pickup::Update(camera, local, allowed, GhostControl::inputCaptured.load(), generation, avatar);
         return allowed;
     }
 

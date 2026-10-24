@@ -264,9 +264,13 @@ namespace Menu {
         const auto pickup = Pickup::Read();
         bool pickupEnabled = Pickup::desired.load();
         ImGui::BeginDisabled(!pickupEnabled && (!pickup.available || pickup.restorePending));
-        if (ImGui::Checkbox("Pick up anything (experimental)", &pickupEnabled)) Pickup::desired.store(pickupEnabled);
+        if (ImGui::Checkbox("Expanded pickup (experimental)", &pickupEnabled)) Pickup::desired.store(pickupEnabled);
         ImGui::EndDisabled();
-        ItemHint("Grab/drop any collider target, including in the lobby. Multiplayer sync is best-effort; this can break the session.");
+        ItemHint("Grab/drop collider targets, including in the lobby. Your own hierarchy is always excluded. Multiplayer sync is best-effort.");
+        int pickupScope = static_cast<int>(Pickup::scope.load());
+        if (ImGui::Combo("Pickup scope", &pickupScope, "Equipment\0Props\0Actors\0Everything\0"))
+            Pickup::scope.store(static_cast<Pickup::Scope>(pickupScope));
+        ItemHint("Equipment: equipment only. Props: non-actors, including equipment and fixtures. Actors: players/ghosts. Everything: all except yourself. Changing scope drops excluded targets.");
         ImGui::TextDisabled("Pickup: %s", pickup.restorePending ? "restoration pending" :
             pickup.active ? "holding" : pickupEnabled ? "enabled" : "off");
         if (pickupEnabled) ImGui::TextDisabled("May desync or break the map; changes persist.");

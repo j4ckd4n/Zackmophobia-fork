@@ -23,7 +23,7 @@ bool GhostControl::Restore() { return true; }
 bool GhostControl::ControlsPlayer(void*) { return controlOwnsPlayer; }
 bool GhostControl::BlocksInput(void*, bool) { return false; }
 bool Pickup::Initialize(void*, void*, void*, void*) { return false; }
-void Pickup::Update(void* camera, void* local, bool allowed, bool, uint64_t) {
+void Pickup::Update(void* camera, void* local, bool allowed, bool, uint64_t, void*) {
     pickupCamera = camera;
     pickupLocal = local;
     pickupAllowed = allowed;

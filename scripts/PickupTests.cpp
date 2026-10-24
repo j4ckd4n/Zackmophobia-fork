@@ -219,7 +219,7 @@ namespace NativeBackendTest {
         bool mine = true, position = true, enabled = true, kinematic = false;
         int synchronization = 1, ownership = 1;
     };
-    int playerType, ghostType, photonType, bodyType, syncType, bodySyncType, equipmentType, propType;
+    int playerType, localType, ghostType, photonType, bodyType, syncType, bodySyncType, equipmentType, propType;
     std::map<uint32_t, void*> roots;
     uint32_t nextHandle = 0;
     bool av = false, boxedBool = false, requestFails = false, requestFaults = false, probeFaults = false;
@@ -321,6 +321,9 @@ namespace NativeBackendTest {
         targetCollider = nullptr;
         failedKinematicRead = nullptr;
         photonClass = &photonType;
+        playerClass = &playerType; localClass = &localType;
+        ghostClass = &ghostType; equipmentClass = &equipmentType;
+        Pickup::scope.store(Pickup::Scope::Everything);
         rigidbodyClass = &bodyType; syncClass = &syncType; bodySyncClass = &bodySyncType;
         SDK::class_get_type = [](void* klass) -> const void* { return klass; };
         SDK::type_get_object = [](const void* type) -> void* { return const_cast<void*>(type); };
@@ -352,7 +355,7 @@ namespace NativeBackendTest {
             &raycastMethod, &colliderMethod, &bodyMethod, &phaseMethod, &positionMethod,
             &hitPointMethod, &rotationMethod, &hitDistanceMethod})
             method->info = method;
-        ::player = ::camera = nullptr;
+        ::player = ::camera = ::avatar = nullptr;
         gameThread = GetCurrentThreadId();
         healthy = ready = true;
     }
@@ -411,6 +414,76 @@ namespace NativeBackendTest {
         candidate = Inspect(&root, nullptr);
         assert(Pickup::Detail::Selectable(candidate) && !candidate.synchronizationSupported);
         assert(!callFailed && writes == 0 && positionWrites == 0);
+    }
+    void ScopeAndSelfProtection() {
+        Reset();
+        Object scene, local, cam, avatar, limb, remote, remoteLimb, item, fixture, collider, body;
+        local.parent = avatar.parent = remote.parent = item.parent = fixture.parent = &scene;
+        cam.parent = &local;
+        limb.parent = &avatar;
+        remoteLimb.parent = &remote;
+        remote.actor = &playerType;
+        item.actor = &equipmentType;
+        local.children = {&cam};
+        avatar.children = {&limb};
+        remote.children = {&remoteLimb};
+        ::player = &local;
+        ::camera = &cam;
+        ::avatar = &avatar;
+        for (auto target : {&local, &cam, &avatar, &limb, &scene}) {
+            const auto rejected = Inspect(target, nullptr);
+            assert(rejected.self && !Pickup::Detail::Selectable(rejected));
+            for (auto selected : {Pickup::Scope::Equipment, Pickup::Scope::Props,
+                Pickup::Scope::Actors, Pickup::Scope::Everything})
+                assert(!Pickup::Detail::InScope(rejected, selected));
+        }
+        auto actor = Inspect(&remoteLimb, nullptr);
+        auto equipment = Inspect(&item, nullptr);
+        auto prop = Inspect(&fixture, nullptr);
+        assert(actor.actor && !actor.self && equipment.equipment && !equipment.actor && !prop.actor);
+        using Pickup::Detail::InScope;
+        using Pickup::Scope;
+        assert(InScope(equipment, Scope::Equipment) && !InScope(actor, Scope::Equipment) &&
+            !InScope(prop, Scope::Equipment));
+        assert(InScope(equipment, Scope::Props) && InScope(prop, Scope::Props) &&
+            !InScope(actor, Scope::Props));
+        assert(InScope(actor, Scope::Actors) && !InScope(equipment, Scope::Actors) &&
+            !InScope(prop, Scope::Actors));
+        assert(InScope(actor, Scope::Everything) && InScope(equipment, Scope::Everything) &&
+            InScope(prop, Scope::Everything));
+        remote.actor = &ghostType;
+        assert(Inspect(&remote, nullptr).actor);
+        remote.children.push_back(&item);
+        item.parent = &remote;
+        const auto actorWithEquipment = Inspect(&remote, nullptr);
+        assert(actorWithEquipment.actor && actorWithEquipment.equipment &&
+            !InScope(actorWithEquipment, Scope::Equipment));
+
+        Pickup::desired.store(true);
+        Pickup::Update(&cam, &local, true, false, 60, &avatar);
+        collider.transform = &limb;
+        collider.body = &body;
+        body.transform = &avatar;
+        targetCollider = &collider;
+        int context = 0;
+        assert(!Pickup::HandleInput(&context));
+        assert(!lease.active && !body.kinematic && writes == 0 && positionWrites == 0);
+        assert(std::strstr(message, "protected"));
+
+        collider.body = nullptr;
+        collider.transform = &fixture;
+        assert(Pickup::HandleInput(&context) && lease.active);
+        Pickup::scope.store(Scope::Actors);
+        Pickup::Update(&cam, &local, true, false, 60, &avatar);
+        assert(!lease.active && positionWrites == 0);
+        assert(!Pickup::HandleInput(&context) && std::strstr(message, "scope"));
+        Pickup::scope.store(Scope::Everything);
+        fixture.body = &fixture;
+        assert(Pickup::HandleInput(&context) && fixture.kinematic);
+        // A held hierarchy becoming the local avatar must release before moving.
+        Pickup::Update(&cam, &local, true, false, 60, &fixture);
+        assert(!lease.active && !fixture.kinematic && positionWrites == 0);
+        assert(Pickup::Restore() && roots.empty());
     }
     void AuthorityLossAndFaultedRestore() {
         Reset();
@@ -627,6 +700,7 @@ int main() {
     RejectedAcquisition();
     CompoundRestoreAndAuthority();
     NativeBackendTest::SelectionAndReplication();
+    NativeBackendTest::ScopeAndSelfProtection();
     NativeBackendTest::AuthorityLossAndFaultedRestore();
     NativeBackendTest::NativeRequestThenGrabCompound();
     NativeBackendTest::OptionalNetworkFailuresAndCameraOnlyContext();

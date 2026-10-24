@@ -50,6 +50,10 @@ namespace {
     void* rigidbodyClass = nullptr;
     void* syncClass = nullptr;
     void* bodySyncClass = nullptr;
+    void* playerClass = nullptr;
+    void* localClass = nullptr;
+    void* ghostClass = nullptr;
+    void* equipmentClass = nullptr;
     bool ready = false, healthy = true, callFailed = false;
     const char* message = "Experimental pickup is off.";
     std::mutex statusMutex;
@@ -57,11 +61,12 @@ namespace {
     Pickup::Detail::Lease lease;
     void* camera = nullptr;
     void* player = nullptr;
+    void* avatar = nullptr;
     bool allowed = false, captured = true;
     uint64_t generation = 0, frameAt = 0;
     float distance = 1.5f;
     Vector3 pivotOffset{};
-    uint32_t transformHandle = 0, cameraHandle = 0, playerHandle = 0;
+    uint32_t transformHandle = 0, cameraHandle = 0, playerHandle = 0, avatarHandle = 0;
     std::vector<uint32_t> bodyHandles, viewHandles;
     uint64_t requestedAt = 0;
     bool ownershipRequested = false;
@@ -348,11 +353,44 @@ namespace {
         return Finite(origin) && Finite(forward);
     }
 
+    bool HasAncestor(void* transform, void* ancestor) {
+        std::unordered_set<void*> seen;
+        for (void* node = transform; node; node = Call(parentMethod, node)) {
+            if (!Living(node) || seen.size() == Pickup::Detail::MaxElements ||
+                !seen.insert(node).second) {
+                callFailed = true;
+                return false;
+            }
+            if (node == ancestor) return true;
+        }
+        return false;
+    }
+
+    bool IsSelf(void* transform) {
+        for (void* anchor : {player, avatar, camera}) {
+            if (!Living(anchor)) continue;
+            void* local = Call(transformMethod, anchor);
+            if (!Living(local)) { callFailed = true; return false; }
+            if (HasAncestor(transform, local) || HasAncestor(local, transform)) return true;
+            if (callFailed) return false;
+        }
+        return false;
+    }
+
+    void Classify(void* transform, Pickup::Detail::Candidate& result) {
+        if (!result.actor)
+            result.actor = Component(transform, playerClass) || Component(transform, localClass) ||
+                Component(transform, ghostClass);
+        if (!result.equipment) result.equipment = Component(transform, equipmentClass) != nullptr;
+    }
+
     Pickup::Detail::Candidate Inspect(void* transform, void* body) {
         Pickup::Detail::Candidate result;
         result.transform = transform;
         result.body = body;
         if (!Living(transform)) return result;
+        result.self = IsSelf(transform);
+        if (result.self || callFailed) return result;
         if (!Value(childCountMethod, transform, result.children)) return result;
         result.hasParent = Living(Call(parentMethod, transform));
         result.ownershipAllowed = true;
@@ -363,6 +401,7 @@ namespace {
         while (node) {
             if (ancestors.size() == Pickup::Detail::MaxElements ||
                 !ancestors.insert(node).second || !Living(node)) return result;
+            Classify(node, result);
             if (!ProbeViews(node, result, node == transform)) result.networkingKnown = false;
             if (node == transform) rootView = result.networked;
             node = Call(parentMethod, node);
@@ -373,6 +412,7 @@ namespace {
         for (size_t index = 0; index < nodes.size(); ++index) {
             node = nodes[index];
             if (!Living(node)) return result;
+            Classify(node, result);
             if (index && !ProbeViews(node, result, true)) result.networkingKnown = false;
             void* attached = Component(node, rigidbodyClass);
             if (attached && bodies.insert(attached).second) result.bodies.push_back(attached);
@@ -485,8 +525,16 @@ namespace {
         // Without an attached body, move the hit collider's transform rather
         // than promoting it to an unrelated PhotonView/scene ancestor.
         auto candidate = Inspect(transform, body);
+        if (candidate.self) {
+            message = "Not held: your player, camera and their hierarchy are protected.";
+            return false;
+        }
         if (!Pickup::Detail::Selectable(candidate) || callFailed) {
             message = "Not held: invalid/destroyed hierarchy or memory-sanity limit.";
+            return false;
+        }
+        if (!Pickup::Detail::InScope(candidate, Pickup::scope.load())) {
+            message = "Not held: target is outside the selected pickup scope.";
             return false;
         }
         Vector3 pivot{}, point{};
@@ -531,7 +579,8 @@ namespace {
 
     bool Frame() {
         for (auto entry : {std::pair<void*, uint32_t*>{camera, &cameraHandle},
-            std::pair<void*, uint32_t*>{player, &playerHandle}}) {
+            std::pair<void*, uint32_t*>{player, &playerHandle},
+            std::pair<void*, uint32_t*>{avatar, &avatarHandle}}) {
             uint32_t next = entry.first ? Root(entry.first) : 0;
             if (entry.first && !next) { callFailed = true; return false; }
             if (!FreeRoot(*entry.second)) {
@@ -549,7 +598,7 @@ namespace {
         bool eligible = false;
         if (lease.active && permission && lease.generation == generation) {
             const auto inspected = Inspect(lease.object.transform, lease.object.body);
-            eligible = Pickup::Detail::Selectable(inspected) &&
+            eligible = Pickup::Detail::InScope(inspected, Pickup::scope.load()) &&
                 Pickup::Detail::SameScope(lease.object, inspected);
             if (eligible) {
                 if (!lease.ObserveOwnership(backend, inspected)) {
@@ -631,6 +680,14 @@ namespace {
         void* collider = SDK::class_from_name(initImages[2], "UnityEngine", "Collider");
         void* hit = SDK::class_from_name(initImages[2], "UnityEngine", "RaycastHit");
         rigidbodyClass = SDK::class_from_name(initImages[2], "UnityEngine", "Rigidbody");
+        playerClass = SDK::class_from_name(initImages[0], "", "Player");
+        localClass = SDK::class_from_name(initImages[0], "", "LocalPlayer");
+        ghostClass = SDK::class_from_name(initImages[0], "", "GhostAI");
+        equipmentClass = SDK::class_from_name(initImages[0], "", "Equipment");
+        if (!playerClass || !localClass || !ghostClass || !equipmentClass) {
+            Logger::Log("[ERROR] Pickup: scope classification metadata unavailable.");
+            return false;
+        }
         photonClass = photonImage ? SDK::class_from_name(photonImage, "Photon.Pun", "PhotonView") : nullptr;
         syncClass = photonImage ? SDK::class_from_name(photonImage, "Photon.Pun", "PhotonTransformView") : nullptr;
         bodySyncClass = photonImage ? SDK::class_from_name(photonImage, "Photon.Pun", "PhotonRigidbodyView") : nullptr;
@@ -680,8 +737,8 @@ namespace {
         case Operation::Input: return Input();
         case Operation::Restore:
             if (!Release()) return false;
-            if (!FreeRoot(cameraHandle) || !FreeRoot(playerHandle)) return false;
-            camera = player = nullptr;
+            if (!FreeRoot(cameraHandle) || !FreeRoot(playerHandle) || !FreeRoot(avatarHandle)) return false;
+            camera = player = avatar = nullptr;
             frameAt = 0;
             return true;
         }
@@ -740,11 +797,12 @@ bool Pickup::Initialize(void* image, void* unityImage, void* physicsImage, void*
 }
 
 void Pickup::Update(void* localCamera, void* localPlayer, bool authorized, bool inputCaptured,
-    uint64_t currentGeneration) {
+    uint64_t currentGeneration, void* localAvatar) {
     if (gameThread && gameThread != GetCurrentThreadId()) return;
     gameThread = GetCurrentThreadId();
     camera = localCamera;
     player = localPlayer;
+    avatar = localAvatar;
     allowed = authorized;
     captured = inputCaptured;
     generation = currentGeneration;

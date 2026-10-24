@@ -471,12 +471,19 @@ siblings, bypassing the original detours. The revised implementation hooks both
 paths and reapplies controlled facing after the native hunt tick. These fixes
 are mock-tested but still need in-game verification.
 
-**Expanded pickup:** enable **Pick up anything (experimental)**, then use
+**Expanded pickup:** enable **Expanded pickup (experimental)**, then use
 the game's normal pickup binding to grab/drop the first collider target within
 2.5 metres, including triggers. This is an
 experimental transform/physics grabber, **not** a way to turn every fixture into
 networked inventory equipment. Actors, equipment, fixed fixtures and static
-scene roots are eligible. It handles multi-part hierarchies and compound
+scene roots are eligible according to **Pickup scope**: **Equipment** selects
+equipment only; **Props** includes equipment and non-actor fixtures;
+**Actors** selects other players/ghosts; **Everything** includes all categories.
+Everything remains the default. The local controller, camera, networked avatar,
+their descendants and any hierarchy containing them are always excluded, even
+in Everything mode. Changing scope drops held targets that no longer qualify.
+Ordinary native pickup behavior remains the fallback for unhandled inputs.
+It handles multi-part hierarchies and compound
 rigidbodies without the previous 128-transform/32-body/view quotas, preferring
 the hit collider's attached rigidbody rather than unrelated ancestors.
 Memory-validity, game-thread, rooting and restoration safeguards remain.

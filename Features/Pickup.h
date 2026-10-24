@@ -7,6 +7,8 @@
 
 namespace Pickup {
     inline std::atomic<bool> desired{false};
+    enum class Scope { Equipment, Props, Actors, Everything };
+    inline std::atomic<Scope> scope{Scope::Everything};
 
     struct Snapshot {
         bool available = false;
@@ -22,7 +24,8 @@ namespace Pickup {
     // Update/HandleInput/Restore: Unity game thread only. desired/Read: any thread.
     // allowed is caller-provided context eligibility; a live camera is required.
     bool Initialize(void* image, void* unityImage, void* physicsImage, void* inputImage);
-    void Update(void* camera, void* localPlayer, bool allowed, bool inputCaptured, uint64_t generation);
+    void Update(void* camera, void* localPlayer, bool allowed, bool inputCaptured,
+        uint64_t generation, void* localAvatar = nullptr);
     bool HandleInput(void* callbackContext);
     bool Restore();
     Snapshot Read();
@@ -31,7 +34,7 @@ namespace Pickup {
     // Existing verified Photon position observers are used without inventing RPCs.
     // Ownership is requested best-effort while holding, without a second press.
     // Unknown/denied synchronization permits explicitly unverified local movement.
-    // Actor/equipment/root colliders are not excluded; dropping never restores position.
+    // Scope filters never permit the local player's hierarchy; dropping never restores position.
     namespace Detail {
         // Corrupt metadata must not cause unchecked allocation/traversal.
         inline constexpr size_t MaxElements = 1024 * 1024;
@@ -47,14 +50,28 @@ namespace Pickup {
             bool networked = false;
             bool synchronizationSupported = false;
             bool networkingKnown = true;
+            bool self = false;
+            bool actor = false;
+            bool equipment = false;
             std::vector<void*> bodies;
             std::vector<void*> views;
             std::vector<void*> requestableViews;
         };
 
         inline bool Selectable(const Candidate& value) {
-            return value.transform && value.children >= 0 && value.validHierarchy &&
+            return !value.self && value.transform && value.children >= 0 && value.validHierarchy &&
                 value.bodies.size() <= MaxElements && value.views.size() <= MaxElements;
+        }
+
+        inline bool InScope(const Candidate& value, Scope selected) {
+            if (!Selectable(value)) return false;
+            switch (selected) {
+            case Scope::Equipment: return value.equipment && !value.actor;
+            case Scope::Props: return !value.actor;
+            case Scope::Actors: return value.actor;
+            case Scope::Everything: return true;
+            }
+            return false;
         }
 
         inline bool SameScope(const Candidate& left, const Candidate& right) {
