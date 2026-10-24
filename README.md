@@ -407,6 +407,36 @@ cl /nologo /EHsc /std:c++20 /W4 /WX /Fe:x64\StaminaTests\StaminaTests.exe /Fo:x6
 if ($LASTEXITCODE -eq 0) { .\x64\StaminaTests\StaminaTests.exe }
 ```
 
+## Player Recovery
+
+**World Options > Get unstuck** returns the local PC player to a native spawn
+anchor: the mission's truck spawn list (`MultiplayerController +0x28`) or the
+lobby list (`MainManager +0x38`). It does not guess coordinates or cache a
+potentially stuck player position. No ghost or host-only match context is needed.
+Exit ghost control first; recovery is unavailable while dead, during another
+teleport, or while native player physics is disabled.
+
+The button queues one game-thread action. Requests expire after 750 ms and are
+cancelled if the player, scene owner or session generation changes. Recovery
+releases/disables expanded pickup before calling the verified native
+`LocalPlayer.TeleportPlayer`. Physics and the native teleport flag are restored
+even after a failed call; pending restoration retains GC roots and blocks unload.
+Other moved objects are not put back. This cannot repair a broken map.
+
+Static REA spawn/teleport evidence:
+`ev_c1f549c5ef4206085b1e2141e05670d8084dfbcf651e447218c95c2ad5358170`,
+`ev_62d13b10c54dfb2fb1b602ab8128ae7519f6d98570aeb8aceed1e85d4970d194`,
+`ev_24e97b5d71302ee4686fae65fe7ae700ea068879e6820951abbd0d271e35cef8`.
+Native-mock tests cover lobby/truck selection, stale and changed-context requests,
+unavailable anchors, pickup restoration, native failures and blocked unload.
+Live-game recovery and multiplayer replication still need verification.
+
+```powershell
+New-Item -ItemType Directory -Force .\x64\RecoveryTests | Out-Null
+cl /nologo /EHsc /std:c++20 /W4 /WX /Fe:x64\RecoveryTests\RecoveryTests.exe /Fo:x64\RecoveryTests\ scripts\RecoveryTests.cpp
+if ($LASTEXITCODE -eq 0) { .\x64\RecoveryTests\RecoveryTests.exe }
+```
+
 ## Experimental Ghost Control and Expanded Pickup
 
 Both features default off. Ghost control requires private/offline host

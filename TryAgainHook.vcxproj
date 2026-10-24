@@ -148,6 +148,7 @@
     <ClInclude Include="Features\Radar.h" />
     <ClInclude Include="Features\GhostControl.h" />
     <ClInclude Include="Features\Pickup.h" />
+    <ClInclude Include="Features\Recovery.h" />
     <ClInclude Include="Features\Stamina.h" />
     <ClInclude Include="Features\WorldActions.h" />
     <ClInclude Include="framework.h" />
@@ -170,6 +171,7 @@
     <ClCompile Include="Hooks\RadarHooks.cpp" />
     <ClCompile Include="Hooks\GhostControlHooks.cpp" />
     <ClCompile Include="Hooks\PickupHooks.cpp" />
+    <ClCompile Include="Hooks\RecoveryHooks.cpp" />
     <ClCompile Include="Hooks\StaminaHooks.cpp" />
     <ClCompile Include="Hooks\WorldActionHooks.cpp" />
     <ClCompile Include="Hooks\Hooks.cpp" />

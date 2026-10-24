@@ -3,6 +3,7 @@
 #include "../Features/Features.h"
 #include "../Features/GhostControl.h"
 #include "../Features/Pickup.h"
+#include "../Features/Recovery.h"
 #include "../Features/Stamina.h"
 #include "../Features/WorldActions.h"
 #include "../Utils/Logger.h"
@@ -385,6 +386,11 @@ namespace {
         }
     }
 
+    bool RecoveryControlsAvailable() {
+        const auto control = GhostControl::Read();
+        return !GhostControl::desired.load() && !control.active && !control.restoring;
+    }
+
     bool UpdatePickup(void* grab) {
         void* local = nullptr;
         void* camera = nullptr;
@@ -409,6 +415,7 @@ namespace {
             Logger::Log("[ERROR] Pickup: local controller lookup faulted; pickup disabled.");
         }
         Pickup::Update(camera, local, allowed, GhostControl::inputCaptured.load(), generation, avatar);
+        Recovery::Update(local, allowed && RecoveryControlsAvailable(), generation);
         return allowed;
     }
 
@@ -440,12 +447,14 @@ namespace {
             WorldActions::Reset();
             const bool controlRestored = GhostControl::Restore();
             const bool pickupRestored = Pickup::Restore();
-            if (interactionDepth == 0 && controlRestored && pickupRestored && SafeRestoreVisibility())
+            const bool recoveryRestored = Recovery::Reset();
+            if (interactionDepth == 0 && controlRestored && pickupRestored && recoveryRestored && SafeRestoreVisibility())
                 cleanupComplete.store(true);
             return;
         }
         const auto host = Hooks::ReadHostContext();
-        if (GhostControl::desired.load() && !GhostControl::ControlsPlayer(host.controller) && !Pickup::Restore()) {
+        if (GhostControl::desired.load() && !GhostControl::ControlsPlayer(host.controller) &&
+            (!Pickup::Restore() || !Recovery::Reset())) {
             GhostControl::desired.store(false);
             Logger::Log("[ERROR] Ghost control rejected: expanded-pickup restoration is still pending.");
         }
@@ -751,6 +760,7 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
         for (auto& input : worldInputHooks) input.original = nullptr;
     GhostControl::Initialize(image, unityImage, navigation, physics);
     Pickup::Initialize(image, unityImage, physics, input);
+    Recovery::Initialize(image, unityImage);
     WorldActions::Initialize(domain, image, unityImage);
     Logger::Log("[WORLD] Renderer override %s; scoped PC interactions %s.",
         visibilityReady ? "ready" : "unavailable", interactionReady ? "ready" : "unavailable");
@@ -765,6 +775,7 @@ void Hooks::ResetRadar() {
     WorldActions::Reset();
     GhostControl::Restore();
     Pickup::Restore();
+    Recovery::Reset();
     SafeRestoreVisibility();
     cursedUnavailable = false;
     rosterUnavailable = false;

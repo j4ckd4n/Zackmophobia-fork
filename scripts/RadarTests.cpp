@@ -10,6 +10,8 @@ namespace {
     void* pickupCamera = nullptr;
     void* pickupLocal = nullptr;
     void* staminaLocal = nullptr;
+    void* recoveryLocal = nullptr;
+    bool recoveryEligible = false, recoveryRestores = true;
     bool pickupAllowed = false, consumePickup = false;
     bool controlOwnsPlayer = false;
     unsigned pickupInputs = 0;
@@ -30,6 +32,12 @@ void Pickup::Update(void* camera, void* local, bool allowed, bool, uint64_t, voi
 }
 bool Pickup::HandleInput(void*) { ++pickupInputs; return consumePickup; }
 bool Pickup::Restore() { return true; }
+void Recovery::Initialize(void*, void*) {}
+void Recovery::Update(void* local, bool eligible, uint64_t) {
+    recoveryLocal = local;
+    recoveryEligible = eligible;
+}
+bool Recovery::Reset() { return recoveryRestores; }
 void Stamina::Observe(void* local) { staminaLocal = local; }
 void WorldActions::Initialize(void*, void*, void*) {}
 void WorldActions::Update(const GhostControl::Context&, bool) {}
@@ -410,7 +418,11 @@ namespace {
         staminaLocal = nullptr;
         assert(UpdatePickup(grabController.data()));
         assert(pickupAllowed && pickupCamera == headObject.data() &&
-            pickupLocal == localController.data() && staminaLocal == localController.data());
+            pickupLocal == localController.data() && staminaLocal == localController.data() &&
+            recoveryLocal == localController.data() && recoveryEligible);
+        GhostControl::desired.store(true);
+        assert(UpdatePickup(grabController.data()) && !recoveryEligible);
+        GhostControl::desired.store(false);
         consumePickup = true;
         pickupInputs = 0;
         Hooks::worldInputHooks[1].original = [](void*, void*, void*) { assert(false); };
@@ -418,10 +430,17 @@ namespace {
         assert(pickupInputs == 1 && pickupAllowed);
         consumePickup = false;
         controlOwnsPlayer = true;
-        assert(!UpdatePickup(grabController.data()) && !pickupAllowed);
+        assert(!UpdatePickup(grabController.data()) && !pickupAllowed && !recoveryEligible);
         controlOwnsPlayer = false;
         cleanupRequested.store(true);
-        assert(!UpdatePickup(grabController.data()) && !pickupAllowed);
+        assert(!UpdatePickup(grabController.data()) && !pickupAllowed && !recoveryEligible);
+        recoveryRestores = false;
+        ServiceWorldOptions();
+        assert(!cleanupComplete.load());
+        recoveryRestores = true;
+        ServiceWorldOptions();
+        assert(cleanupComplete.load());
+        cleanupComplete.store(false);
         cleanupRequested.store(false);
         Put(localController, 0x148, static_cast<void*>(nullptr));
         assert(!UpdatePickup(grabController.data()) && !pickupAllowed);

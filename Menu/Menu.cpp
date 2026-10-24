@@ -12,6 +12,7 @@
 #include "../Features/Radar.h"
 #include "../Features/GhostControl.h"
 #include "../Features/Pickup.h"
+#include "../Features/Recovery.h"
 #include "../Features/Stamina.h"
 #include "../Features/WorldActions.h"
 #include "../Hooks/Hooks.h"
@@ -276,6 +277,17 @@ namespace Menu {
         if (pickupEnabled) ImGui::TextDisabled("May desync or break the map; changes persist.");
         if ((pickupEnabled || pickup.restorePending) && !pickup.message.empty())
             ImGui::TextWrapped("%s", pickup.message.c_str());
+
+        ImGui::SeparatorText("Player recovery");
+        const auto recovery = Recovery::Read();
+        const bool recoveryFresh = recovery.sampledAt && now >= recovery.sampledAt &&
+            now - recovery.sampledAt <= 750;
+        ImGui::BeginDisabled(!recovery.available || !recoveryFresh || recovery.pending);
+        if (ImGui::Button("Get unstuck")) Recovery::Queue(now);
+        ImGui::EndDisabled();
+        ItemHint(!recovery.reason.empty() ? recovery.reason.c_str() :
+            "Return to the truck/lobby spawn and release expanded pickup. Exit ghost control first.");
+        if (!recovery.message.empty()) ImGui::TextWrapped("%s", recovery.message.c_str());
     }
 
     static void SubmitRadarAction(int actorId, uint64_t generation, Radar::Action action, int sanity = 100)

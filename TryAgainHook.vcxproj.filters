@@ -54,6 +54,9 @@
     <ClInclude Include="Features\Pickup.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="Features\Recovery.h">
+      <Filter>Features</Filter>
+    </ClInclude>
     <ClInclude Include="Features\Stamina.h">
       <Filter>Features</Filter>
     </ClInclude>
@@ -75,6 +78,9 @@
       <Filter>Hooks</Filter>
     </ClCompile>
     <ClCompile Include="Hooks\PickupHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\RecoveryHooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
     <ClCompile Include="Hooks\StaminaHooks.cpp">
