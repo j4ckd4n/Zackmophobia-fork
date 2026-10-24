@@ -11,6 +11,15 @@ namespace SDK {
      using il2cpp_class_get_method_from_name_t = void* (*)(void* klass, const char* name, int argsCount);
      using il2cpp_object_get_class_t = void* (*)(void* obj);
      using il2cpp_class_get_name_t = const char* (*)(void* klass);
+     using il2cpp_class_get_field_from_name_t = void* (*)(void* klass, const char* name);
+     using il2cpp_field_get_offset_t = size_t (*)(void* field);
+     using il2cpp_method_get_param_t = const void* (*)(void* method, uint32_t index);
+     using il2cpp_class_from_type_t = void* (*)(const void* type);
+     using il2cpp_class_value_size_t = int32_t (*)(void* klass, uint32_t* alignment);
+     using il2cpp_class_get_fields_t = void* (*)(void* klass, void** iterator);
+     using il2cpp_field_get_type_t = const void* (*)(void* field);
+     using il2cpp_class_get_type_t = const void* (*)(void* klass);
+     using il2cpp_type_get_object_t = void* (*)(const void* type);
 
      // Global pointers to be filled in dllmain.cpp
      inline il2cpp_domain_get_t domain_get = nullptr;
@@ -20,6 +29,15 @@ namespace SDK {
      inline il2cpp_class_get_method_from_name_t get_method = nullptr;
      inline il2cpp_object_get_class_t object_get_class = nullptr;
      inline il2cpp_class_get_name_t class_get_name = nullptr;
+     inline il2cpp_class_get_field_from_name_t get_field = nullptr;
+     inline il2cpp_field_get_offset_t field_get_offset = nullptr;
+     inline il2cpp_method_get_param_t method_get_param = nullptr;
+     inline il2cpp_class_from_type_t class_from_type = nullptr;
+     inline il2cpp_class_value_size_t class_value_size = nullptr;
+     inline il2cpp_class_get_fields_t class_get_fields = nullptr;
+     inline il2cpp_field_get_type_t field_get_type = nullptr;
+     inline il2cpp_class_get_type_t class_get_type = nullptr;
+     inline il2cpp_type_get_object_t type_get_object = nullptr;
 
      // Helper to convert Unity's internal System.String to a standard C++ string
      inline std::string IL2CPP_To_String(void* ptr) 
@@ -29,8 +47,12 @@ namespace SDK {
           if (length <= 0 || length > 512) return "";
           wchar_t* raw = (wchar_t*)((char*)ptr + 0x14);
           if (IsBadReadPtr(raw, length * 2)) return "";
-          std::wstring ws(raw, length);
-          return std::string(ws.begin(), ws.end());
+          const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, raw, length, nullptr, 0, nullptr, nullptr);
+          if (bytes <= 0) return "";
+          std::string result(bytes, '\0');
+          if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, raw, length, result.data(), bytes, nullptr, nullptr) != bytes)
+               return "";
+          return result;
      }
 
      // Simple readable-check helper

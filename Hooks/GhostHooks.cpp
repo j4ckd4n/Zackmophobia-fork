@@ -5,9 +5,20 @@
 #include "Hooks.h"
 #include "../SDK/IL2CPP.h"
 #include "../Features/Features.h"
+#include "../Features/GhostControl.h"
 #include "../Utils/Logger.h"
 
 namespace {
+    void ChangeGhostState(void* instance, int32_t state, void* interact, bool parameter, void* info) {
+        const bool suspended = Hooks::BeginGhostTransition(instance);
+        __try {
+            Hooks::oGhostAI_ChangeState(instance, state, interact, parameter, info);
+        }
+        __finally {
+            if (suspended) Hooks::EndGhostTransition();
+        }
+    }
+
     constexpr int32_t GHOST_STATE_IDLE = 0;
     constexpr int32_t GHOST_STATE_HUNTING = 2;
     constexpr int32_t GHOST_STATE_ROAM = 3;
@@ -60,9 +71,35 @@ namespace {
         return (fabsf(v.x) < MAX_REASONABLE && fabsf(v.y) < MAX_REASONABLE && fabsf(v.z) < MAX_REASONABLE);
     }
 
-    bool TryReadVec3At(void* base, size_t offset, Hooks::Vector3& out) {
-        if (!base) return false;
-        return SDK::ReadSafe((char*)base + offset, out) && LooksLikeWorldPos(out);
+    const char* GhostTypeName(int32_t id) {
+        static constexpr const char* types[] = {
+            "Spirit", "Wraith", "Phantom", "Poltergeist", "Banshee", "Jinn",
+            "Mare", "Revenant", "Shade", "Demon", "Yurei", "Oni", "Yokai",
+            "Hantu", "Goryo", "Myling", "Onryo", "The Twins", "Raiju", "Obake",
+            "Mimic", "Moroi", "Deogen", "Thaye", "None", "Gallu", "Dayan",
+            "Obambo", "Kormos", "Aswang", "Deildegast"
+        };
+        return id >= 0 && id < static_cast<int32_t>(sizeof(types) / sizeof(types[0]))
+            ? types[id] : nullptr;
+    }
+
+    const char* GhostStateName(int32_t state) {
+        for (const auto& entry : stateMap) {
+            if (entry.state == state) return entry.name;
+        }
+        return "Unknown";
+    }
+
+    void ResetGhostDisplay() {
+        std::lock_guard<std::mutex> lock(Features::ghostDisplayMutex);
+        Features::ghostDisplay = {};
+    }
+
+    void CacheGhost(Hooks::GhostAI_o* instance) {
+        if (Hooks::gCurrentGhostAI != instance) {
+            ResetGhostDisplay();
+            Hooks::gCurrentGhostAI = instance;
+        }
     }
 
     bool TryGetPosition(void* ghostAIInstance, Hooks::Vector3& out, const char*& source) {
@@ -70,22 +107,22 @@ namespace {
         if (!SDK::IsReadable(ghostAIInstance, 0x20)) return false;
 
         // try transform path first
-        if (Hooks::oGetTransform && Hooks::oGetPosition) {
+        if (Hooks::oGetTransform && Hooks::oGetPositionInjected) {
             __try {
-                void* transform = Hooks::oGetTransform(ghostAIInstance, nullptr);
+                void* transform = Hooks::oGetTransform(ghostAIInstance, Hooks::getTransformMethodInfo);
                 if (SDK::IsReadable(transform, 0x20)) {
-                    // On x64 IL2CPP, Vector3 can be returned through an explicit out pointer in many builds.
                     Hooks::Vector3 pos{};
-                    Hooks::oGetPosition(&pos, transform, nullptr);
+                    Hooks::oGetPositionInjected(transform, &pos, Hooks::getPositionInjectedMethodInfo);
                     if (LooksLikeWorldPos(pos)) {
                         out = pos;
-                        source = "unity:get_position";
+                        source = "GhostAI.transform.position";
                         return true;
                     }
                 }
             }
-            __except (EXCEPTION_EXECUTE_HANDLER) {
-                // Signature/layout mismatches are common across Unity versions.
+            __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+                return false;
             }
         }
 
@@ -95,6 +132,11 @@ namespace {
 
 void Hooks::ForceHunting()
 {
+    if (!GhostControl::AllowTransition(gCurrentGhostAI, GHOST_STATE_HUNTING)) {
+        GhostControl::huntRequested.store(true);
+        Logger::Log("[MOD] Force Hunt queued for the controlled ghost.");
+        return;
+    }
 	if (!gCurrentGhostAI || IsBadReadPtr(gCurrentGhostAI, sizeof(GhostAI_o)))
 	{
 		Logger::Log("[ERROR] ForceHunting: No valid ghost instance cached.");
@@ -132,38 +174,26 @@ void Hooks::ForceHunting()
 
 void Hooks::hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo)
 {
+    if (!GhostControl::AllowTransition(instance, state)) return;
     static bool logged = false;
     if (!logged) {
         Logger::Log("[HOOK] GhostAI.ChangeState is executing.");
         logged = true;
     }
 
-    if (instance && !IsBadReadPtr(instance, sizeof(GhostAI_o))) {
-        gCurrentGhostAI = (GhostAI_o*)instance;
-    }
-
-    const char* stateName = "Unknown";
-    for (const auto& entry : stateMap) {
-        if (entry.state == state) {
-            stateName = entry.name;
-            break;
+    if (gGhostInfoLayoutValid && SDK::IsReadable(instance, sizeof(GhostAI_o))) {
+        CacheGhost(static_cast<GhostAI_o*>(instance));
+        const char* stateName = GhostStateName(state);
+        std::lock_guard<std::mutex> lock(Features::ghostDisplayMutex);
+        Features::ghostDisplay.state = stateName;
+        for (int i = 9; i > 0; --i) {
+            Features::ghostDisplay.historicalStates[i] = Features::ghostDisplay.historicalStates[i - 1];
         }
+        Features::ghostDisplay.historicalStates[0] = stateName;
     }
-
-    if (stateName != "Unknown") {
-        Features::cGhostState = const_cast<char*>(stateName);
-    } else {
-        Logger::Log("[GHOST] Unknown ChangeState -> %d (bParam2=%s, photonInteract=%p)", state, bParam2 ? "true" : "false", photonInteract);
-    }
-
-    // add to historical states buffer
-    for (int i = 9; i > 0; i--) {
-        Features::cHistoricalStates[i] = Features::cHistoricalStates[i - 1];
-    }
-    Features::cHistoricalStates[0] = stateName;
 
     if (oGhostAI_ChangeState) {
-        oGhostAI_ChangeState(instance, state, photonInteract, bParam2, methodInfo);
+        ChangeGhostState(instance, state, photonInteract, bParam2, methodInfo);
     }
 }
 
@@ -177,21 +207,23 @@ void Hooks::hkGhostAI_Init(void* instance, GhostData_o* data, void* methodInfo)
         logged = true;
     }
 
-    // Cache the ghost instance so ForceHunting() can use it
-    if (instance && !IsBadReadPtr(instance, sizeof(GhostAI_o)))
-        gCurrentGhostAI = (GhostAI_o*)instance;
-
-    if (Features::bGhostTypeEnabled && instance && !IsBadReadPtr(instance, 0x200)) {
-        GhostData_o* ghostData = (GhostData_o*)data;
-        GhostData_Fields* fields = &ghostData->fields;
-        
-        const char* types[] = { "Spirit", "Wraith", "Phantom", "Poltergeist", "Banshee", "Jinn", "Mare", "Revenant", "Shade", "Demon", "Yurei", "Oni", "Yokai", "Hantu", "Goryo", "Myling", "Onryo", "The Twins", "Raiju", "Obake", "Mimic", "Moroi", "Deogen", "Thaye", "None", "Gallu", "Dayan", "Obambo", "Aswang", "Kormos"};
-
-        Logger::Log("[GHOST INIT] Ghost Type: %d, %d", fields->ghostTypeId1, fields->ghostTypeId2);
-        Logger::Log("[GHOST INIT] Ghost Type: %s", types[fields->ghostTypeId2]);
+    if (gGhostInfoLayoutValid && SDK::IsReadable(instance, sizeof(GhostAI_o))) {
+        ResetGhostDisplay();
+        ResetRadar();
+        gCurrentGhostAI = static_cast<GhostAI_o*>(instance);
     }
 
     oGhostAI_Init(instance, data, methodInfo);
+}
+
+void Hooks::hkGhostAI_Destroy(void* instance, void* methodInfo) {
+    if (instance == gCurrentGhostAI) {
+        gCurrentGhostAI = nullptr;
+        ResetGhostDisplay();
+        ResetRadar();
+        Logger::Log("[GHOST] Ghost destroyed; display cleared.");
+    }
+    oGhostAI_Destroy(instance, methodInfo);
 }
 
 void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
@@ -201,58 +233,54 @@ void Hooks::hkGhostUpdate(void* instance, void* methodInfo) {
         logged = true;
     }
 
+    oGhostUpdate(instance, methodInfo);
+    UpdateRadar();
+    if (!gGhostInfoLayoutValid) return;
+
+    GhostInfo_o info{};
+    GhostAI_o ghost{};
+    if (!SDK::ReadSafe(instance, info) ||
+        !SDK::ReadSafe(info.fields.ghost, ghost) ||
+        ghost.fields.ghostInfo != instance) {
+        CacheGhost(nullptr);
+        return;
+    }
+    CacheGhost(info.fields.ghost);
+
+    const auto& data = info.fields.data.fields;
+    const std::string name = SDK::IL2CPP_To_String(data.string);
+    const char* type = GhostTypeName(data.ghostTypeId2);
+    Vector3 position{};
+    const char* source = nullptr;
+    const bool positionValid = TryGetPosition(info.fields.ghost, position, source);
+    static bool positionFailed = false;
+    if (!positionValid && !positionFailed) {
+        Logger::Log("[ERROR] GhostAI position unavailable; ghost coordinates cleared.");
+    }
+    positionFailed = !positionValid;
+
+    {
+        std::lock_guard<std::mutex> lock(Features::ghostDisplayMutex);
+        auto& display = Features::ghostDisplay;
+        if (display.name != name || display.typeId != data.ghostTypeId2) {
+            Logger::Log("[GHOST] %s is %s (ID %d)", name.empty() ? "<unavailable>" : name.c_str(),
+                type ? type : "<unknown>", data.ghostTypeId2);
+        }
+        display.name = name;
+        display.type = type;
+        display.typeId = data.ghostTypeId2;
+        display.state = GhostStateName(ghost.fields.state);
+        display.positionValid = positionValid;
+        display.positionSource = positionValid ? source : nullptr;
+        display.position[0] = positionValid ? position.x : 0.0f;
+        display.position[1] = positionValid ? position.y : 0.0f;
+        display.position[2] = positionValid ? position.z : 0.0f;
+    }
+
     // Execute force-hunt requests on a game thread to avoid cross-thread Unity/IL2CPP calls.
     if (Features::bForceHunting) {
         Features::bForceHunting = false;
         ForceHunting();
     }
 
-    if (Features::bGhostTypeEnabled && instance && !IsBadReadPtr(instance, 0x200)) {
-
-        static int sampleTick = 0;
-        if ((++sampleTick % 60) == 0) { // Don't spam every frame, check periodically as ghost spawns and types are stable.
-            Hooks::Vector3 pos{};
-            const char* source = nullptr;
-            if (TryGetPosition(instance, pos, source)) {
-                Features::cGhostPosSource = const_cast<char*>(source);
-                Features::cGhostPos[0] = pos.x;
-                Features::cGhostPos[1] = pos.y;
-                Features::cGhostPos[2] = pos.z;
-                // Logger::Log("[GHOST] Position (%s): X=%.2f Y=%.2f Z=%.2f", source, pos.x, pos.y, pos.z);
-            }
-        }
-
-        static std::string lastGhost = "";
-            void** fields = (void**)instance;
-
-            // Scan memory for the ghost's name string
-        for (int i = 0; i < 100; i++) {
-            std::string currentName = SDK::IL2CPP_To_String(fields[i]);
-            if (!currentName.empty()) {
-                // Find ghost type ID (usually an integer between 0-27)
-                int typeIdx = 0;
-                int* intFields = (int*)instance;
-                for (int j = 0; j < 64; j++) {
-                    if (intFields[j] > 0 && intFields[j] <= 29) {
-                        typeIdx = intFields[j];
-                        break;
-                    }
-                }
-
-                const char* types[] = { "Spirit", "Wraith", "Phantom", "Poltergeist", "Banshee", "Jinn", "Mare", "Revenant", "Shade", "Demon", "Yurei", "Oni", "Yokai", "Hantu", "Goryo", "Myling", "Onryo", "The Twins", "Raiju", "Obake", "Mimic", "Moroi", "Deogen", "Thaye", "None", "Gallu", "Dayan", "Obambo", "Aswang", "Kormos"};
-
-                if (currentName != lastGhost) {
-                    printf("\n[GHOST][ID: %d] %s is a %s\n", typeIdx, currentName.c_str(), types[typeIdx]);
-                    Logger::Log("[GHOST] %s is a %s", currentName.c_str(), types[typeIdx]);
-
-                    Features::cGhostName = currentName.c_str();
-                    Features::cGhostType = types[typeIdx];
-                    Features::cGhostTypeId = typeIdx;
-                    lastGhost = currentName;
-                }
-                break;
-            }
-        }
-    }
-    oGhostUpdate(instance, methodInfo);
 }

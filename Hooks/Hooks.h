@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <cstddef>
 #include "../SDK/IL2CPP.h"
 #include "../SDK/il2cpp_subset.h"
 
@@ -41,8 +42,8 @@ namespace Hooks {
     };
 
     struct GhostInfo_Fields {
-        void* super;
-        void* unknown1;
+        void* inheritedFields[3];
+        GhostData_o data;
         GhostAI_o* ghost;
         LevelRoom_o* levelRoom;
         float lastDeltaDiff;
@@ -56,9 +57,9 @@ namespace Hooks {
     };
 
     struct GhostAI_fields {
-        void* super;
-        void* unknnown1;
-        int32_t unknownInt1;
+        void* inheritedFields[3];
+        void* unknown1;
+        int32_t state;
         GhostInfo_o* ghostInfo;
     };
 
@@ -67,6 +68,13 @@ namespace Hooks {
         void* monitor;
         GhostAI_fields fields;
     };
+
+    static_assert(sizeof(GhostData_o) == 0x40);
+    static_assert(offsetof(GhostData_Fields, string) == 0x20);
+    static_assert(offsetof(GhostInfo_o, fields) + offsetof(GhostInfo_Fields, data) == 0x28);
+    static_assert(offsetof(GhostInfo_o, fields) + offsetof(GhostInfo_Fields, ghost) == 0x68);
+    static_assert(offsetof(GhostAI_o, fields) + offsetof(GhostAI_fields, state) == 0x30);
+    static_assert(offsetof(GhostAI_o, fields) + offsetof(GhostAI_fields, ghostInfo) == 0x38);
 
     // `Player_o` and `Player_fields` are provided by SDK/il2cpp_subset.h.
 
@@ -82,6 +90,16 @@ namespace Hooks {
     typedef void (*GhostAI_Hunting_t)(void* instance, bool someBool, int32_t someInt32, void* photonMessageInfo, void* methodInfo);
     typedef void (*GhostAI_ChangeState_t)(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
     typedef void (*SetupPlayer_t)(void* instance, void* methodInfo);
+    typedef void (*Visibility_t)(void* instance, bool visible, void* methodInfo);
+    // Win64 passes Unity's 24-byte InputAction.CallbackContext by address.
+    typedef void (*InputAction_t)(void* instance, void* context, void* methodInfo);
+    struct WorldInputHook {
+        const char* type;
+        const char* name;
+        InputAction_t original;
+        InputAction_t hook;
+    };
+    extern WorldInputHook worldInputHooks[13];
 
     typedef void (*EvidenceController_SpawnBoneDNAEvidence)(void* instance, void* levelRoom, void* methodInfo);
     typedef void (*DNAEvidence_Spawn_t)(void* instance, int32_t roomId, void* methodInfo);
@@ -95,13 +113,16 @@ namespace Hooks {
 
     typedef void* (*GetTransform_t)(void* instance, void* method);
     typedef void (*GetPosition_t)(Vector3* ret, void* instance, void* method);
+    typedef void (*GetPositionInjected_t)(void* instance, Vector3* ret, void* method);
 
-    // Cached ghost instance — set when GhostAI::Init fires, cleared when null
+    // Also recovered by GhostInfo.Update after late injection; cleared on destruction.
     inline GhostAI_o* gCurrentGhostAI = nullptr;
+    inline bool gGhostInfoLayoutValid = false;
     inline void* gCurrentLightSwitch = nullptr;
 
     // Original function pointers
-    inline Update_t oStaminaUpdate = nullptr;
+    inline Update_t oPCStaminaUpdate = nullptr;
+    inline Update_t oVRStaminaUpdate = nullptr;
     inline Update_t oFPCUpdate = nullptr;
     inline Update_t oGhostUpdate = nullptr;
     inline Update_t oLightSwitchStart = nullptr;
@@ -112,9 +133,13 @@ namespace Hooks {
     inline GetRewardAmount_t oGetRewardAmount = nullptr;
     inline ChangeSanity_t oChangeSanity = nullptr;
     inline GhostAI_Init_t oGhostAI_Init = nullptr;
+    inline Update_t oGhostAI_Destroy = nullptr;
 	inline GhostAI_Hunting_t fnGhostAI_Hunting = nullptr; // direct call, not a detour
     inline GhostAI_ChangeState_t oGhostAI_ChangeState = nullptr;
     inline SetupPlayer_t oSetupPlayer = nullptr;
+    inline Visibility_t oGhostVisibility = nullptr;
+    inline Update_t oPropGrabUpdate = nullptr;
+    inline Update_t oDoorFixedUpdate = nullptr;
 
     inline EvidenceController_SpawnBoneDNAEvidence oEvidenceController_SpawnBoneDNAEvidence = nullptr;
     inline DNAEvidence_Spawn_t oDNAEvidence_Spawn = nullptr;
@@ -122,9 +147,13 @@ namespace Hooks {
     // Unity function pointers (if needed for more complex hooks)
     inline GetTransform_t oGetTransform = nullptr; // UnityEngine.Component.get_transform
     inline GetPosition_t oGetPosition = nullptr; // UnityEngine.Transform.get_position
+    inline GetPositionInjected_t oGetPositionInjected = nullptr;
+    inline void* getTransformMethodInfo = nullptr;
+    inline void* getPositionInjectedMethodInfo = nullptr;
 
 	// Hook function declarations
-    void hkStaminaUpdate(void* instance, void* methodInfo);
+    void hkPCStaminaUpdate(void* instance, void* methodInfo);
+    void hkVRStaminaUpdate(void* instance, void* methodInfo);
     void hkFPCUpdate(void* instance, void* methodInfo);
     void hkGhostUpdate(void* instance, void* methodInfo);
     void hkSetCard(void* instance, int cardType, void* methodInfo);
@@ -134,6 +163,7 @@ namespace Hooks {
     int hkGetRewardAmount(void* instance, void* methodInfo);
     void hkChangeSanity(void* instance, float amount, void* methodInfo);
 	void hkGhostAI_Init(void* instance, GhostData_o *data, void* methodInfo);
+    void hkGhostAI_Destroy(void* instance, void* methodInfo);
 	void hkGhostAI_ChangeState(void* instance, int32_t state, void* photonInteract, bool bParam2, void* methodInfo);
 	void ForceHunting(); // calls GhostAI::Hunting on the cached ghost instance
     void hkLightSwitchStart(void* instance, void* methodInfo);
@@ -142,6 +172,16 @@ namespace Hooks {
     void hkEvidenceController_SpawnBoneDNAEvidence(void* instance, void* levelRoom, void* methodInfo);
     void hkDNAEvidence_Spawn(void* instance, int32_t roomId, void* methodInfo);
 
+    void InitRadar(void* domain, void* image, void* unityImage);
+    void UpdateRadar();
+    void ResetRadar();
+    void hkGhostVisibility(void* instance, bool visible, void* methodInfo);
+    void hkPropGrabUpdate(void* instance, void* methodInfo);
+    void hkDoorFixedUpdate(void* instance, void* methodInfo);
+    bool BeginGhostTransition(void* instance);
+    void EndGhostTransition();
+    bool PrepareWorldOptionsForUnload();
+    void SetWorldHooksInstalled(bool installed);
     void Init();
-    void Shutdown();
+    bool Shutdown();
 }

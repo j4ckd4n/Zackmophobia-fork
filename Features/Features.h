@@ -1,7 +1,11 @@
 #pragma once
+#include <atomic>
+#include <mutex>
+#include <string>
 
 namespace Features {
-    inline bool bStaminaEnabled   = false;
+    inline std::atomic<bool> bGhostVisible{false};
+    inline std::atomic<bool> bDeadInteraction{false};
     inline bool bSpeedEnabled     = false;
     inline float fSprintValue     = 6.0f;
     inline bool bGhostTypeEnabled = true;
@@ -12,16 +16,18 @@ namespace Features {
     inline bool bNoSanityLoss     = false;
     inline bool bForceHunting     = false; // triggers once then resets
 
-    inline char* cPlayerPosSource = nullptr; // set to "cache" when position is updated from cached transform, "live" when read directly from FPC each time
-    inline float cPlayerPos[3]; // updated every 120 ticks when FPCUpdate hook is active
+    struct GhostDisplay {
+        std::string name;
+        const char* type = nullptr;
+        int typeId = -1;
+        const char* state = nullptr;
+        const char* positionSource = nullptr;
+        float position[3] = {};
+        bool positionValid = false;
+        const char* historicalStates[10] = {};
+    };
 
-    inline const char* cGhostName = nullptr; // set to current ghost's name when GhostTypeDisplay is enabled
-    inline const char* cGhostType = nullptr; // set to current ghost's type when GhostTypeDisplay is enabled
-    inline int cGhostTypeId = -1; // set to current ghost's type ID (0-29) when GhostTypeDisplay is enabled]
-    inline const char* cGhostState = nullptr; // set to current ghost's state (Idle, Hunting, etc.) when GhostTypeDisplay is enabled
-    inline const char* cGhostPosSource = nullptr; // set to "unity:get_position" when position is read through Unity calls, "none" if no valid position obtained
-    inline float cGhostPos[3]; // updated every 60 ticks when GhostUpdate hook is active and ghost instance is valid
-    inline const char* cHistoricalStates[10] = {}; // could be used to track previous ghost states if desired
+    inline std::mutex ghostDisplayMutex;
+    inline GhostDisplay ghostDisplay;
 
-    inline float fBonePos[3];
 }

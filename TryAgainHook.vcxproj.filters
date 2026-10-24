@@ -45,12 +45,42 @@
     <ClInclude Include="Features\Features.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="Features\Radar.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="Features\GhostControl.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="Features\Pickup.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="Features\Stamina.h">
+      <Filter>Features</Filter>
+    </ClInclude>
+    <ClInclude Include="Features\WorldActions.h">
+      <Filter>Features</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Hooks\GhostHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\RadarHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\GhostControlHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\PickupHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\StaminaHooks.cpp">
+      <Filter>Hooks</Filter>
+    </ClCompile>
+    <ClCompile Include="Hooks\WorldActionHooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
     <ClCompile Include="Hooks\Hooks.cpp">
