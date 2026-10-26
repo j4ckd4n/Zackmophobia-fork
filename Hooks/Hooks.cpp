@@ -6,6 +6,7 @@
 #include "../Utils/Logger.h"
 #include "../Features/GhostControl.h"
 #include "../Features/Stamina.h"
+#include "../Features/Reporting.h"
 
 #pragma comment(lib, "../Lib/detours.lib") 
 
@@ -16,6 +17,11 @@ namespace Hooks {
           void* domain = SDK::domain_get();
           void* assembly = SDK::assembly_open(domain, "Assembly-CSharp");
           void* image = SDK::assembly_get_image(assembly);
+
+          if (!Reporting::Initialize(domain, image, GetModuleHandleW(L"GameAssembly.dll"))) {
+               Logger::Log("[ERROR] Detection/report protections unavailable; gameplay hooks will not be installed.");
+               return;
+          }
 
           void* unityAssembly = SDK::assembly_open(domain, "UnityEngine.CoreModule");
           void* unityImage = SDK::assembly_get_image(unityAssembly);
@@ -136,7 +142,7 @@ namespace Hooks {
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
 
-          LONG worldHookError = NO_ERROR;
+          LONG worldHookError = Reporting::Install(true);
           const auto attachWorld = [&worldHookError](PVOID* original, PVOID hook) {
                const LONG error = DetourAttach(original, hook);
                if (error != NO_ERROR) worldHookError = error;
@@ -158,6 +164,8 @@ namespace Hooks {
           if (oGhostVisibility) attachWorld(&(PVOID&)oGhostVisibility, hkGhostVisibility);
           if (oPropGrabUpdate) attachWorld(&(PVOID&)oPropGrabUpdate, hkPropGrabUpdate);
           if (oDoorFixedUpdate) attachWorld(&(PVOID&)oDoorFixedUpdate, hkDoorFixedUpdate);
+          if (oCursorLock) attachWorld(&(PVOID&)oCursorLock, hkCursorLock);
+          if (oCursorVisible) attachWorld(&(PVOID&)oCursorVisible, hkCursorVisible);
           for (auto& input : worldInputHooks)
                if (input.original) attachWorld(&(PVOID&)input.original, input.hook);
           const LONG controlError = GhostControl::InstallHooks(true);
@@ -172,9 +180,12 @@ namespace Hooks {
                return;
           }
           const LONG result = DetourTransactionCommit();
+          Reporting::installed = result == NO_ERROR;
           SetWorldHooksInstalled(result == NO_ERROR);
           if (result == NO_ERROR) {
                Logger::Log("[SYSTEM] Hook transaction committed.");
+               Logger::Log("[REPORTING] Local automatic SelfPlayerReport blocking active; other clients/server checks are unaffected.");
+               Logger::Log("[DETECTION] HACKER-specific termination suppression active; unrelated crash/quit handling is unchanged.");
           } else {
                Logger::Log("[ERROR] Hook transaction failed (%ld).", result);
           }
@@ -182,11 +193,15 @@ namespace Hooks {
 
      bool Shutdown() {
           Logger::Log("[SYSTEM] Detaching hooks.");
+          if (!Reporting::installed.load()) {
+               Logger::Log("[SYSTEM] No committed gameplay hooks to detach.");
+               return true;
+          }
           SetWorldHooksInstalled(false);
 
           DetourTransactionBegin();
           DetourUpdateThread(GetCurrentThread());
-          LONG detachError = NO_ERROR;
+          LONG detachError = Reporting::Install(false);
           const auto detach = [&detachError](PVOID* original, PVOID hook) {
                const LONG error = DetourDetach(original, hook);
                if (error != NO_ERROR) detachError = error;
@@ -208,6 +223,8 @@ namespace Hooks {
           if (oGhostVisibility) detach(&(PVOID&)oGhostVisibility, hkGhostVisibility);
           if (oPropGrabUpdate) detach(&(PVOID&)oPropGrabUpdate, hkPropGrabUpdate);
           if (oDoorFixedUpdate) detach(&(PVOID&)oDoorFixedUpdate, hkDoorFixedUpdate);
+          if (oCursorLock) detach(&(PVOID&)oCursorLock, hkCursorLock);
+          if (oCursorVisible) detach(&(PVOID&)oCursorVisible, hkCursorVisible);
           for (auto& input : worldInputHooks)
                if (input.original) detach(&(PVOID&)input.original, input.hook);
           const LONG controlError = GhostControl::InstallHooks(false);
@@ -222,6 +239,7 @@ namespace Hooks {
           }
 
           if (DetourTransactionCommit() == NO_ERROR) {
+               Reporting::installed = false;
                Logger::Log("[SYSTEM] Hook detachment committed.");
                return true;
           } else {

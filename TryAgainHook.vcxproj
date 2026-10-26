@@ -146,6 +146,7 @@
   <ItemGroup>
     <ClInclude Include="Features\Features.h" />
     <ClInclude Include="Features\Radar.h" />
+    <ClInclude Include="Features\Reporting.h" />
     <ClInclude Include="Features\GhostControl.h" />
     <ClInclude Include="Features\Pickup.h" />
     <ClInclude Include="Features\Recovery.h" />

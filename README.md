@@ -137,8 +137,10 @@ if ($LASTEXITCODE -eq 0) { .\x64\GhostInfoTests\GhostInfoTests.exe }
 
 ## Proximity Radar and Player Controls
 
-The separate **Radar** window is enabled by default. **HOME** hides both overlay
-windows; **Show Radar** in the main window toggles just the radar. Its adjustable
+The separate **Radar** window is enabled by default. **HOME** closes the controls
+and releases mouse/first-person input while leaving the radar visible and
+read-only. Press **HOME** again to edit settings, move/resize panels, or use
+player actions. **Show Radar** in the main window toggles just the radar. Its adjustable
 5-100 m circular X/Z view centers on the local player's networked avatar. Choose
 north-up (world +Z up and +X right) or player-up; there is no floorplan. Player-up
 rotates both positions and arrows using the local heading, falling back explicitly
@@ -175,11 +177,46 @@ Kill/revive requires an active match and either offline mode or master-client
 authority in a non-visible/private room. Kill requires confirmation. The UI
 queues a request; the game thread rechecks authority, session generation,
 target identity, and life state before invoking `BeginDeathSequence(SnappedNeck)`
-or `RevivePlayer(false)`. It does not forge RPC sender information or write life
-flags. A request remains pending until the requested state is observed or ten
+for **Kill**, `BeginDeathSequence(HangedMan)` for the separate **Hanged Man**
+button,
+or sending the native `Revive` RPC on the target Player's PhotonView with an
+empty argument array and `RpcTarget.AllViaServer`. Revive also requires a live
+corpse belonging to the target, corpse animator, and matching player-animation component/animator, and
+rejects a revival already in progress. **The active contract must contain tarot
+cards or a monkey paw**, as configured in `Difficulty.actualCursedItems`; scene
+markers or chosen/random settings are not a substitute for that native check.
+Unsupported/unreadable contract metadata disables Revive without disabling
+Kill or sanity controls. Eligibility is shown in the UI, checked before queuing,
+and rechecked immediately before dispatch.
+
+Observed host- and remote-target revive crashes logged the same rejected
+`Revive`, followed by `SIGABRT`. The host crash stack passed through the game's
+report/termination path. The native receiver rejects
+contracts without either revive source before any revive animation/setup.
+Sending that RPC unconditionally was unsafe even with valid corpse/animator
+pointers; a synchronous access-violation guard cannot catch a later intentional
+abort. The revive guard declines those requests rather than bypassing the game's
+validation. Automatic self-report suppression is a separate hook described below.
+
+It does not call `RevivePlayer(false)`:
+that wrapper starts a coroutine which sends the RPC and then immediately calls
+`PlayerCharacterAnimations.TriggerRevive` on the caller's replica, an unsafe
+extra animation path when reviving somebody else. The receiver handles native
+revive setup and corpse animation instead. RPC invocation uses
+`il2cpp_runtime_invoke` to report synchronous managed exceptions; the old
+access-violation guard could not protect deferred coroutine execution.
+It does not forge RPC sender information or write life flags.
+A request remains pending until the requested state is observed or ten
 seconds elapse; it is never automatically retried. Game-side ownership/sender
 checks can reject a request. Native action access violations disable subsequent
 actions and are reported in the overlay/log.
+
+**Hanged Man** has the same confirmation and authority requirements as Kill.
+It selects native death type `0` (the tarot hanging animation), not tarot card
+type `9`, and does not draw a card or change the deck. The normal Kill button
+still selects death type `1` (snapped neck). REA observed
+`TarotCards.HangedMan` calling `BeginDeathSequence(0)`:
+`ev_0c0a545d0695e909df250bd27d16979f6a4b5bfc504a4f8ac7a9274a34212c04`.
 
 **Set sanity** opens a 0-100% control for each living player, including yourself.
 Apply sends a one-time native `NetworkedUpdatePlayerSanity` RPC with
@@ -192,8 +229,114 @@ generation, life state and range on the game thread. A matching local observatio
 does not independently verify another client's acceptance. Failures are reported
 and requests are never retried.
 
+### Local automatic self-report suppression
+
+While the DLL's gameplay hooks are installed, the generated
+`ModerationModuleBindings.SelfPlayerReport` entry point is intercepted before
+network dispatch. A blocked attempt is logged locally without its detection
+payload or player identifiers and raises a managed `InvalidOperationException`;
+it does not fabricate a successful backend response. Radar shows whether this
+specific blocker is active.
+
+The binding is checked against the recovered native method RVA. Both this
+blocker and the scoped termination guard below must have supported metadata and
+native APIs before gameplay hooks can be installed.
+Attachment shares the gameplay-hook transaction, and detachment restores the
+original entry point. Reload the rebuilt DLL to activate this change; it cannot
+affect an older loaded copy or undo already delivered reports.
+
+**This is not a guarantee against reports, bans, or crashes.** It covers this
+client's intercepted automatic self-report entry point only. It does not cancel
+requests already in flight, run before injection or after unloading, prevent
+reports from other clients or servers, disable manual `ReportPlayer` calls, or
+block alternative reporting paths. Native gameplay validation remains intact.
+Reporting suppression alone does not prevent deliberate termination; the
+separate guard below covers the identified `HACKER` handler cases only.
+
+Read-only REA analysis recovered this client endpoint template:
+
+```text
+POST https://cloud-code.services.api.unity.com/v1/projects/{projectId}/modules/ModerationModule/SelfPlayerReport
+```
+
+The generated binding passes `detectionName` with bearer authentication. Retained
+crash logs showed successful HTTP/task-result continuations through this binding;
+DNS failures for other Unity analytics hosts do not establish that this request
+was blocked. Backend report persistence and enforcement are not visible locally.
+Static reporting/termination and URL-construction evidence:
+`ev_8763a9ec2f7e5ef1d82918d1193fba149c1d7694c4bd9ba6bc097d6c04de5bc9`,
+`ev_8d4db2ead1ccc43fe8413595628511f913b7afe0e0507b70abdf69b8d189514e`.
+
+### Scoped HACKER termination suppression
+
+The shared native detection coroutine is intercepted only when its reason
+starts with **`HACKER:`** or **`HACKER DETECTED:`**. Prefix inspection reads only
+the necessary UTF-16 characters, including for long reasons, without logging
+account identifiers or detection payloads. Other reasons, unreadable states,
+and unsupported coroutine states retain the original handler; state errors are
+logged explicitly.
+
+Matching handlers are marked completed and finished through the real
+`AsyncTaskMethodBuilder.SetResult`, rather than leaving callers waiting forever
+or returning a fabricated network result. This covers both initial execution
+and resumption from the report await. It skips the identified handler's
+deliberate fault/crash/quit sequence without globally hooking `ForceCrash`,
+`Application.Quit`, or OS termination functions. Native action rejection,
+contract eligibility and sender/ownership checks are not changed.
+
+The async value-type layout, completion method and handler RVAs are checked
+against runtime metadata before attachment. Both protections share the gameplay
+hook transaction and are restored on unload. Radar displays **Known HACKER
+termination: blocked** when installed; a local log records each suppression.
+Reload the rebuilt DLL to activate the change.
+
+**Coverage is limited to this handler and these markers.** It cannot stop a
+termination already executing past the intercepted entry, reverse existing
+memory corruption, undo a delivered report or ban, prevent server-side action,
+or prevent unrelated crash/quit paths. A pending report may already have been
+sent even if its later termination continuation is suppressed. Invalid gameplay
+actions remain invalid.
+
+REA found duplicated entry wrappers at `0xAC9210` and `0x249AA90` starting the
+same async state machine, whose `MoveNext` is at `0x24964E0`. Intercepting the
+shared handler avoids missing one wrapper. The shared `Start` instantiation
+directly calls that `MoveNext` entry. Static evidence:
+`ev_ebfc99922db25173ab05048c15f53eabee7ca13f091ac3a924133f22a96557ba`,
+`ev_d77979686de441ebd3e513caddb1bbaf8da3d981f98c804cafac5ed5589129c2`,
+`ev_2b6c08744c5c56d5859de2dda50ca07508693ce269271a0a4c7f795a149a6bcd`,
+and the reporting/termination evidence above. These observations and fixture
+regressions do not establish live-game acceptance.
+
+The isolated reporting regression uses real Detours against a harmless native
+fixture with mocked managed-exception exports. It checks blocked dispatch,
+explicit failure, initial/resumed/completed HACKER handlers, long and unrelated
+reasons, async metadata guards, and restoration on detach. It sends no requests,
+does not invoke real crash/quit APIs, and does not load the game:
+
+```powershell
+New-Item -ItemType Directory -Force .\x64\ReportingTests | Out-Null
+cl /nologo /EHsc /std:c++20 /Fe:x64\ReportingTests\ReportingTests.exe /Fo:x64\ReportingTests\ `
+  scripts\ReportingTests.cpp /link /LIBPATH:Lib detours.lib
+if ($LASTEXITCODE -eq 0) { .\x64\ReportingTests\ReportingTests.exe }
+```
+
 Additional static REA evidence for the installed build:
 
+- Revive crash-path correction: `RevivePlayer` at RVA `0xD2EA50` starts the
+  coroutine at `0xD30AD0`, which sends `Revive` via `AllViaServer` and calls
+  `TriggerRevive` on `Player + 0x100`:
+  `ev_4eb50fbaf91a457472c99d6e27e0cb63dd81bc6f7b19c6818fc6461045b25c96`,
+  `ev_63f0556219f3d08a71eccf2de736afd51a12993636eeb3247c7471090fef4576`.
+  The native receiver validates owner/master sender identity, accesses the
+  corpse/animator, and sets the revival flag at `+0x2B`; native completion
+  clears that flag:
+  `ev_89e5d7e80e897474e78dfea9cb585db9c9a7f4b5634112fdab1336f0ecee1b0f`,
+  `ev_9272eec2f19acfd358a42cade5d5a87c751f421411892a53e075f5c5dfda58b3`,
+  `ev_58053d886142811a04d63471418c82d6234cdc8a29175a300c55fd3546b2fe31`.
+  Corpse animation exit calls `FinishPlayerRevive` through its Player reference:
+  `ev_01fc71d6d3814aaf801d2aae04cf61346249e4f1fe9f29c5207f7dfc2b9a185a`.
+  These are static REA CLI/Rizin observations of the matching DLL digest above,
+  not a reproduced crash stack or an in-game verification of the correction.
 - Death/revive wrappers and sanity arithmetic:
   `ev_f600a23098517fe1b3816f85b775e74fc5690833c9cd72da9ab783d92f1c6a11`.
 - Lifecycle flags, local-owner checks, and revive coroutine:
@@ -223,7 +366,8 @@ The compact charcoal style uses square panels, thin borders, and grayscale
 controls inspired by the supplied reference. Panels remain draggable and
 resizable. Appearance controls adjust UI scale, panel opacity, and radar opacity;
 the radar fill stays more opaque than its parent panel. These settings are
-session-only. HOME still hides both panels without resetting settings.
+session-only. HOME closes the controls without hiding the radar or resetting
+settings.
 Control explanations and disabled-action reasons appear on hover rather than
 as paragraphs in the panel. Errors and essential warnings remain visible.
 
@@ -239,22 +383,70 @@ visibility/blinking. Disabling the option or changing the model/session restores
 the baseline. The user confirmed this option works without changing AI behavior.
 Shader/material effects remain game-controlled; not every appearance is verified.
 
-**Dead interaction (experimental, PC only)** allows the completed-dead local
-player to enter normal PC item/use/inventory and door-drag input paths.
+**Dead interaction (experimental, PC only)** attempts to let the completed-dead local
+player to enter normal PC item/use/inventory, door-drag, and flashlight-shortcut
+input paths. The flashlight callback is restricted to the current local PC
+controller's flashlight and its matching grab/controller references.
 `PCPropGrab + 0xE0` and the local controller's `+0x38` gate are temporarily
-changed only around those callbacks and restored in a `finally` scope.
+changed around input/door callbacks and restored in a `finally` scope.
+The item frame-update loop may refresh the interaction mode, but no longer
+clears the local controller's death flag across that entire loop. Journal,
+pause-menu, menu-transition, and overlay input ownership suspend the override;
+close the controls with **HOME** and close the native UI before interacting.
 The authoritative `Player.dead` flag is never changed, and a genuine revival
 retains its new controller state. Remote players and VR controllers are not
 patched. Ordinary item permissions, locks, and network ownership/sender checks
 remain intact; acceptance of every equipment/object type is not guaranteed.
+The game's dead-player inventory limit is deliberately retained: death reduces
+both local and network inventories to one slot. Expanding only the local
+inventory could send slot indices that unmodified remote clients cannot handle.
+The previous version was reported to leave doors/objects inaccessible and to
+disrupt the dead host's journal/mouse input. The narrower scopes and explicit
+UI guards address unsafe state exposure, but door/object acceptance and journal
+recovery still require an in-game retest. This is not full living-player
+interaction parity.
+
+**Overlay mouse ownership** is independent of the journal and player life state.
+While the focused controls menu is open, Unity's cursor is unlocked and visible
+and the local PC movement/look flags are suppressed only during the native
+first-person update, then restored (including for dead players). Native cursor
+requests update the restoration baseline while the overlay owns input. **HOME**,
+focus loss, and unload release the override. The read-only radar does not own
+input or change the game's cursor. Native input-cancellation callbacks
+can still release held doors/items. No journal contents or canvas state are
+rewritten. Cursor/layout binding failures are logged; failed restoration blocks
+unload.
 
 END first requests restoration on the game thread. If restoration fails or the
 game does not acknowledge cleanup within two seconds, unloading is cancelled
 and logged; resume the game and retry END. Hook-detachment failure also leaves
 the DLL loaded rather than freeing live callbacks.
 
+After shutdown, the unload worker releases the injection's loader reference and
+returns normally so MSVC can also release the reference owned by `std::thread`.
+Calling `FreeLibraryAndExitThread` from that worker skipped CRT cleanup, leaving
+the DLL resident even after the overlay disappeared. An older DLL already stuck
+in that state requires a one-time game restart before injecting the fixed build.
+
 Additional static REA evidence:
 
+- Native revive contract validation reads `LevelValues +0x38` and
+  `Difficulty.actualCursedItems +0xB0`, requiring enum value `1` (tarot cards)
+  or `7` (monkey paw) before accepting the RPC:
+  `ev_984f68d508a5c95986bc78a4865ff8d9a64deb6e40948f443bd9580a2b306cf8`.
+- Item frame-update branches and native journal input checks:
+  `ev_93646f0d109eb036bf04ed5ee8b25f9b6ea67913f999089effa19924b744fe54`.
+- Completed local death, door interaction death checks, and journal cursor
+  ownership:
+  `ev_0c0a545d0695e909df250bd27d16979f6a4b5bfc504a4f8ac7a9274a34212c04`.
+- Menu ownership gates and held-door death checks:
+  `ev_0825fdde54f3de02d2da767942e0a5a4d1f9054918be1ffda8bd13346256b36f`.
+- `PCFlashlight.OnTorchUse` (`0xC77D10`) checks the local controller's `+0x38`
+  death gate before normal equipment/input restrictions:
+  `ev_95d34c84ff3656244cfbcfc66828eac4455a228021baaa112de1302894707284`.
+- Local and network inventory reduction on death:
+  `ev_f914dd1fa94c9fba9e18e9860434151ffa912f107b06826db745668da73e0ea4`,
+  `ev_9f00399094c4e14a0fd7370181fb99c2d9e48178c3ad5eeae95aa0a2481ce31f`.
 - Renderer-only `GhostModel.SetVisibility` (`0x208BA80`), PC input gates, and
   `PlayerDied`/`PlayerRevived` interaction-mode writes:
   `ev_4f2532468afddbf5f1c025564bf9cc3348c56f27effac3d609449e8bb7cd6287`.
@@ -275,7 +467,10 @@ collection, action dispatch/confirmation/timeouts, malformed rosters, and
 observation access-violation shutdown. Additional cases cover player-up rotation,
 multiple cursed items, reversible renderer state, hunt/transition suspension,
 scoped local interaction gates, real revival, callback exceptions, and cleanup
-acknowledgement/failure. The overlay also passed a headless ImGui smoke test;
+acknowledgement/failure. Revive cases cover both native sources and local/remote
+targets, ineligible contracts, missing/corrupt settings, and eligibility changes
+after a request is queued without sending an unsafe RPC.
+The overlay also passed a headless ImGui smoke test;
 that does not establish live rendering or game-side interaction acceptance.
 From an x64 Developer PowerShell:
 
@@ -283,6 +478,21 @@ From an x64 Developer PowerShell:
 New-Item -ItemType Directory -Force .\x64\RadarTests | Out-Null
 cl /nologo /EHsc /std:c++20 /Fe:x64\RadarTests\RadarTests.exe /Fo:x64\RadarTests\ scripts\RadarTests.cpp
 if ($LASTEXITCODE -eq 0) { .\x64\RadarTests\RadarTests.exe }
+```
+
+Headless overlay regressions in `scripts\MenuTests.cpp` cover the visible passive
+radar, ignored mouse/keyboard input, cursor release, popup cancellation, and
+independent panel visibility. They use the actual ImGui renderer code without
+initializing a game window or graphics device:
+
+```powershell
+New-Item -ItemType Directory -Force .\x64\MenuTests | Out-Null
+cl /nologo /EHsc /std:c++20 /Fe:x64\MenuTests\MenuTests.exe /Fo:x64\MenuTests\ `
+  scripts\MenuTests.cpp Menu\imgui\imgui.cpp Menu\imgui\imgui_draw.cpp `
+  Menu\imgui\imgui_tables.cpp Menu\imgui\imgui_widgets.cpp `
+  Menu\imgui\imgui_impl_dx11.cpp Menu\imgui\imgui_impl_win32.cpp kiero\kiero.cpp `
+  /link /LIBPATH:Lib d3d11.lib dxgi.lib d3dcompiler.lib dwmapi.lib user32.lib gdi32.lib detours.lib
+if ($LASTEXITCODE -eq 0) { .\x64\MenuTests\MenuTests.exe }
 ```
 
 ## Door and Ghost Actions
@@ -476,8 +686,9 @@ first-person is experimental and may clip ghost models. Camera-specific
 postprocessing and the original body's audio-listener perspective are not
 transferred. Input respects native movement/look gates and pauses while ImGui
 captures it or the game loses focus;
-HOME hides the overlay. Pickup/use callbacks are blocked for the possessed
-host, and expanded pickup is dropped before possession starts.
+HOME closes the controls while keeping the radar visible. Pickup/use callbacks
+are blocked for the possessed host, and expanded pickup is dropped before
+possession starts.
 
 Toggling off restores the original camera and native player input, ends a
 remaining controlled hunt through native state exit, and returns the AI to idle
@@ -596,7 +807,12 @@ A launcher helper source is included at:
 
 - `Launcher/LaunchWithDll.cpp`
 
-It starts the game normally, waits until `GameAssembly.dll` is loaded, then injects `Zackmophobia.dll` using a remote `LoadLibraryW` call.
+It reuses a running process whose full executable path matches the requested game,
+or starts the game if none matches. It then waits until `GameAssembly.dll` is
+loaded and injects `Zackmophobia.dll` using a remote `LoadLibraryW` call.
+Extra launch arguments apply only to a newly started game. Multiple matching
+instances, inaccessible same-name candidates, or an already loaded hook DLL
+are reported as errors rather than launching another copy or stacking hooks.
 
 This delayed injection avoids early-startup crashes that can happen when injecting too early in Unity startup.
 
@@ -631,7 +847,8 @@ What it does:
 
 - Builds `TryAgainHook.sln` (`Debug|x64` by default)
 - Creates a timestamped shadow copy of `Zackmophobia.dll` under `x64/Injected/`
-- Starts the game through `LaunchWithDll.exe` with that copied DLL
+- Reuses the running game through `LaunchWithDll.exe`, or launches it only if
+  no matching executable is running, then injects the copied DLL
 
 Using a shadow copy avoids build-output file lock issues because the game loads the copied DLL, not `x64/Debug/Zackmophobia.dll` directly.
 
@@ -654,7 +871,32 @@ powershell -ExecutionPolicy Bypass -File .\scripts\AutoInject.ps1 -GameExe "C:\P
 1. Run `AutoInject.ps1`.
 2. Play/test.
 3. Press `END` to unload the currently injected DLL.
-4. Re-run `AutoInject.ps1` for the next iteration.
+4. Re-run `AutoInject.ps1` for the next iteration; the existing game is reused.
+
+The helper refuses reinjection while `Zackmophobia.dll` or a
+`Zackmophobia_*.dll` shadow copy is still loaded. Wait for **END** cleanup to
+finish; if cleanup was cancelled, resolve the logged restoration failure first.
+It does not force-unload live hooks or restart the game on an attachment failure.
+
+Runtime regressions are in `scripts\LauncherTests.cpp`. In an x64 Developer
+PowerShell, compile it normally as `LauncherTests.exe` (link `user32.lib`),
+with `/DLAUNCHER_FIXTURE_GAME` as `FixtureGame.exe`, and with
+`/LD /DLAUNCHER_FIXTURE_DLL` as `GameAssembly.dll`, all in one temporary directory.
+Copy that DLL to `Zackmophobia_fixture.dll` and `Zackmophobia_second.dll`; also
+copy `FixtureGame.exe` and `GameAssembly.dll` into an `Other` subdirectory.
+Running `LauncherTests.exe` exercises real loading into these disposable
+fixtures, including reuse, unload/reinjection, launch fallback, duplicate-hook
+and ambiguous-process refusal, executable-path isolation, and loader failure.
+It does not target Phasmophobia.
+
+Actual unload-worker regressions are in `scripts\UnloadTests.cpp`. Compile with
+`/std:c++20 /MDd`: normally as `UnloadTests.exe`, with
+`/LD /DUNLOAD_FIXTURE_ENGINE` as `GameAssembly.dll`, and with
+`/LD /DUNLOAD_FIXTURE_HOOK` as `HookUnloadFixture.dll` (link `user32.lib`), all in
+a separate temporary directory. The hook fixture includes the real `dllmain.cpp`
+with stub engine/shutdown services. Running `UnloadTests.exe` checks cancelled
+cleanup, failed detachment, and two complete module unload/reload cycles without
+touching the game.
 
 ## Safety Fixes Applied
 

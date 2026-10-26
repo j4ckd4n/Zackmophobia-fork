@@ -32,7 +32,6 @@ namespace {
     using IntGetter = int32_t (*)(void*, void*);
     using PlayerGetter = void* (*)(int32_t, void*);
     using DeathAction = void (*)(void*, int32_t, void*);
-    using ReviveAction = void (*)(void*, bool, void*);
     using RotationGetter = void (*)(void*, Radar::Quaternion*, void*);
 
     Method<StaticObject> playerList, localPlayer, currentRoom;
@@ -42,26 +41,45 @@ namespace {
     Method<ObjectGetter> nickName, findBone, findCursed, headTransform;
     Method<PlayerGetter> gamePlayer;
     Method<DeathAction> beginDeath;
-    Method<ReviveAction> revivePlayer;
-    void* sanityRpc = nullptr;
-    void* sanityObjectClass = nullptr;
+    Method<ObjectGetter> playerView;
+    Method<StaticObject> levelValues;
+    bool reviveReady = false;
+    void* playerRpc = nullptr;
+    void* rpcObjectClass = nullptr;
     void* sanityFloatClass = nullptr;
-    void* (*sanityStringNew)(const char*) = nullptr;
-    void* (*sanityArrayNew)(void*, uintptr_t) = nullptr;
+    void* (*rpcStringNew)(const char*) = nullptr;
+    void* (*rpcArrayNew)(void*, uintptr_t) = nullptr;
     void* (*sanityBox)(void*, void*) = nullptr;
-    void* (*sanityInvoke)(void*, void*, void**, void**) = nullptr;
+    void* (*rpcInvoke)(void*, void*, void**, void**) = nullptr;
     void (*sanityBarrier)(void*, void**, void*) = nullptr;
-    uint32_t (*sanityPin)(void*, bool) = nullptr;
-    void (*sanityUnpin)(uint32_t) = nullptr;
+    uint32_t (*rpcPin)(void*, bool) = nullptr;
+    void (*rpcUnpin)(uint32_t) = nullptr;
     bool sanityReady = false;
     Method<RotationGetter> rotation;
     Method<BoolGetter> rendererEnabled;
     Method<Hooks::Visibility_t> setRendererEnabled;
     bool visibilityReady = false;
     bool interactionReady = false;
+    bool overlayReady = false, overlayHealthy = true;
+    Method<int32_t (*)(void*)> cursorLock;
+    Method<StaticBool> cursorVisible;
+    Method<int32_t (*)(void*, void*)> inputPhase;
+    void* cursorLockInfo = nullptr;
+    void* cursorVisibleInfo = nullptr;
+    struct CursorState {
+        int32_t lock = 0;
+        bool visible = false;
+        bool active = false;
+    } cursorState;
+    struct MovementScope {
+        void* controller = nullptr;
+        uint8_t movement = 0, look = 0;
+        bool changed = false;
+    } pendingMovementRestore;
     bool worldHealthy = true;
     unsigned ghostTransitions = 0;
     unsigned interactionDepth = 0;
+    unsigned movementDepth = 0;
     void* localPCClass = nullptr;
     std::atomic<bool> cleanupRequested{false};
     std::atomic<bool> cleanupComplete{false};
@@ -107,42 +125,59 @@ namespace {
         return false;
     }
 
-    bool InitSanity(void* image, void* photon, void* core) {
+    bool InitReviveEligibility(void* image) {
+        HMODULE module = GetModuleHandleW(L"GameAssembly.dll");
+        const auto elementClass = module ? reinterpret_cast<void* (*)(void*)>(
+            GetProcAddress(module, "il2cpp_class_get_element_class")) : nullptr;
+        if (!elementClass || !SDK::get_field || !SDK::class_value_size) return false;
+        void* valuesClass = SDK::class_from_name(image, "", "LevelValues");
+        void* difficultyClass = SDK::class_from_name(image, "", "Difficulty");
+        void* sources = difficultyClass ? SDK::get_field(difficultyClass, "actualCursedItems") : nullptr;
+        void* arrayClass = sources ? SDK::class_from_type(SDK::field_get_type(sources)) : nullptr;
+        void* sourceClass = arrayClass ? elementClass(arrayClass) : nullptr;
+        uintptr_t getterCode = 0;
+        uint32_t alignment = 0;
+        return levelValues.Bind(image, "", "LevelValues", "get_Instance", 0) &&
+            SDK::ReadSafe(levelValues.info, getterCode) &&
+            getterCode == reinterpret_cast<uintptr_t>(module) + 0x2319570 &&
+            FieldMatches(valuesClass, 0x38, difficultyClass) &&
+            sources && SDK::field_get_offset(sources) == 0xB0 && sourceClass &&
+            SDK::class_value_size(sourceClass, &alignment) == sizeof(int32_t);
+    }
+
+    bool InitPlayerRpc(void* photon, void* core) {
+        playerRpc = nullptr;
         HMODULE module = GetModuleHandleW(L"GameAssembly.dll");
         if (!module || !photon || !core || !SDK::method_get_param) return false;
-        sanityStringNew = reinterpret_cast<decltype(sanityStringNew)>(GetProcAddress(module, "il2cpp_string_new"));
-        sanityArrayNew = reinterpret_cast<decltype(sanityArrayNew)>(GetProcAddress(module, "il2cpp_array_new"));
+        rpcStringNew = reinterpret_cast<decltype(rpcStringNew)>(GetProcAddress(module, "il2cpp_string_new"));
+        rpcArrayNew = reinterpret_cast<decltype(rpcArrayNew)>(GetProcAddress(module, "il2cpp_array_new"));
         sanityBox = reinterpret_cast<decltype(sanityBox)>(GetProcAddress(module, "il2cpp_value_box"));
-        sanityInvoke = reinterpret_cast<decltype(sanityInvoke)>(GetProcAddress(module, "il2cpp_runtime_invoke"));
+        rpcInvoke = reinterpret_cast<decltype(rpcInvoke)>(GetProcAddress(module, "il2cpp_runtime_invoke"));
         sanityBarrier = reinterpret_cast<decltype(sanityBarrier)>(GetProcAddress(module, "il2cpp_gc_wbarrier_set_field"));
-        sanityPin = reinterpret_cast<decltype(sanityPin)>(GetProcAddress(module, "il2cpp_gchandle_new"));
-        sanityUnpin = reinterpret_cast<decltype(sanityUnpin)>(GetProcAddress(module, "il2cpp_gchandle_free"));
+        rpcPin = reinterpret_cast<decltype(rpcPin)>(GetProcAddress(module, "il2cpp_gchandle_new"));
+        rpcUnpin = reinterpret_cast<decltype(rpcUnpin)>(GetProcAddress(module, "il2cpp_gchandle_free"));
         const auto methods = reinterpret_cast<void* (*)(void*, void**)>(GetProcAddress(module, "il2cpp_class_get_methods"));
         const auto name = reinterpret_cast<const char* (*)(void*)>(GetProcAddress(module, "il2cpp_method_get_name"));
         const auto count = reinterpret_cast<uint32_t (*)(void*)>(GetProcAddress(module, "il2cpp_method_get_param_count"));
-        if (!sanityStringNew || !sanityArrayNew || !sanityBox || !sanityInvoke || !sanityBarrier ||
-            !sanityPin || !sanityUnpin || !methods || !name || !count) return false;
+        if (!rpcStringNew || !rpcArrayNew || !rpcInvoke ||
+            !rpcPin || !rpcUnpin || !methods || !name || !count) return false;
         void* viewClass = SDK::class_from_name(photon, "Photon.Pun", "PhotonView");
         void* targetClass = SDK::class_from_name(photon, "Photon.Pun", "RpcTarget");
-        void* sanityClass = SDK::class_from_name(image, "", "PlayerSanity");
-        sanityObjectClass = SDK::class_from_name(core, "System", "Object");
+        rpcObjectClass = SDK::class_from_name(core, "System", "Object");
         sanityFloatClass = SDK::class_from_name(core, "System", "Single");
-        if (!viewClass || !targetClass || !sanityObjectClass || !sanityFloatClass ||
-            !FieldMatches(sanityClass, 0x20, viewClass)) return false;
+        if (!viewClass || !targetClass || !rpcObjectClass) return false;
         void* iterator = nullptr;
         while (void* method = methods(viewClass, &iterator)) {
             const char* methodName = name(method);
             if (methodName && std::strcmp(methodName, "RPC") == 0 && count(method) == 3 &&
                 SDK::class_from_type(SDK::method_get_param(method, 1)) == targetClass) {
-                sanityRpc = method;
+                playerRpc = method;
                 break;
             }
         }
-        void* receive = SDK::get_method(sanityClass, "NetworkedUpdatePlayerSanity", 2);
-        uintptr_t rpcCode = 0, receiveCode = 0;
+        uintptr_t rpcCode = 0;
         const uintptr_t base = reinterpret_cast<uintptr_t>(module);
-        return SDK::ReadSafe(sanityRpc, rpcCode) && rpcCode == base + 0x43638A0 &&
-            SDK::ReadSafe(receive, receiveCode) && receiveCode == base + 0xDA5570;
+        return SDK::ReadSafe(playerRpc, rpcCode) && rpcCode == base + 0x43638A0;
     }
 
     bool ValidPosition(const Radar::Vector3& value) {
@@ -152,6 +187,33 @@ namespace {
 
     bool Alive(void* object) {
         return SDK::IsReadable(object, 0x20) && objectAlive.call(object, objectAlive.info);
+    }
+
+    const char* ReviveRestriction() {
+        __try {
+            if (!reviveReady) return "Revive unavailable: native contract metadata is unsupported.";
+            void* values = levelValues.call(levelValues.info);
+            void* difficulty = nullptr;
+            void* sources = nullptr;
+            uintptr_t count = 0;
+            if (!Alive(values) || !ReadField(values, 0x38, difficulty) || !Alive(difficulty) ||
+                !ReadField(difficulty, 0xB0, sources) || !ReadField(sources, 0x18, count) || count > 128)
+                return "Revive unavailable: active contract settings could not be read.";
+            for (uintptr_t index = 0; index < count; ++index) {
+                int32_t source = 0;
+                if (!ReadField(sources, 0x20 + index * sizeof(source), source))
+                    return "Revive unavailable: active contract sources could not be read.";
+                // The native Revive receiver rejects contracts without either source.
+                if (source == 1 || source == 7) return nullptr;
+            }
+            return "Revive requires tarot cards or a monkey paw in the contract.";
+        }
+        __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+            ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+            reviveReady = false;
+            Logger::Log("[ERROR] Revive contract lookup faulted; revival disabled.");
+            return "Revive unavailable: contract validation faulted; see logs.";
+        }
     }
 
     bool ReadHeading(void* transform, float& heading) {
@@ -291,11 +353,80 @@ namespace {
             ReadField(local, 0x38, complete) && complete == 1;
     }
 
+    bool OverlayRequested() {
+        return overlayReady && overlayHealthy && worldHooksInstalled.load() &&
+            !cleanupRequested.load() && Features::bOverlayInput.load();
+    }
+
+    bool CaptureCursor() {
+        if (cursorState.active) return true;
+        cursorState.lock = cursorLock.call(cursorLock.info);
+        if (cursorState.lock < 0 || cursorState.lock > 2) {
+            overlayHealthy = false;
+            Logger::Log("[ERROR] Overlay: unsupported cursor state; input override disabled.");
+            return false;
+        }
+        cursorState.visible = cursorVisible.call(cursorVisible.info);
+        cursorState.active = true;
+        return true;
+    }
+
+    bool RestoreMovement(const MovementScope& scope) {
+        __try {
+            if (!scope.changed || !Alive(scope.controller)) return true;
+            const bool movement = SDK::WriteSafe(static_cast<char*>(scope.controller) + 0x20, scope.movement);
+            const bool look = SDK::WriteSafe(static_cast<char*>(scope.controller) + 0x21, scope.look);
+            return movement && look;
+        }
+        __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+            ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+            return false;
+        }
+    }
+
+    bool ServiceOverlay() {
+        __try {
+            if (!RestoreMovement(pendingMovementRestore)) return false;
+            pendingMovementRestore = {};
+            if (OverlayRequested()) {
+                if (!CaptureCursor()) return false;
+                Hooks::oCursorLock(0, cursorLockInfo);
+                Hooks::oCursorVisible(true, cursorVisibleInfo);
+            } else if (cursorState.active) {
+                Hooks::oCursorLock(cursorState.lock, cursorLockInfo);
+                Hooks::oCursorVisible(cursorState.visible, cursorVisibleInfo);
+                cursorState = {};
+            }
+            return true;
+        }
+        __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+            ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+            overlayHealthy = false;
+            Logger::Log("[ERROR] Overlay: cursor override/restoration faulted; unload blocked until restored.");
+            return false;
+        }
+    }
+
+    bool InteractionUIClosed(void* local) {
+        if (Features::bOverlayInput.load() || GhostControl::inputCaptured.load()) return false;
+        void* journal = nullptr;
+        void* menu = nullptr;
+        void* owner = nullptr;
+        uint8_t journalOpen = 1, menuOpen = 1, menuBusy = 1;
+        return ReadField(local, 0x28, journal) && Alive(journal) &&
+            ReadField(journal, 0xB8, journalOpen) && journalOpen == 0 &&
+            ReadField(local, 0x130, menu) && Alive(menu) &&
+            ReadField(menu, 0x28, owner) && owner == local &&
+            ReadField(menu, 0x20, menuOpen) && menuOpen == 0 &&
+            ReadField(menu, 0x21, menuBusy) && menuBusy == 0;
+    }
+
     struct InteractionScope {
         void* player = nullptr;
         void* local = nullptr;
         void* grab = nullptr;
         uint8_t grabMode = 0;
+        bool spoofDeath = true;
         bool changed = false;
     };
     InteractionScope pendingInteractionRestore;
@@ -303,7 +434,7 @@ namespace {
     bool ApplyInteraction(const InteractionScope& scope) {
         __try {
             return SDK::WriteSafe(static_cast<char*>(scope.grab) + 0xE0, uint8_t{1}) &&
-                SDK::WriteSafe(static_cast<char*>(scope.local) + 0x38, uint8_t{0});
+                (!scope.spoofDeath || SDK::WriteSafe(static_cast<char*>(scope.local) + 0x38, uint8_t{0}));
         }
         __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
             ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
@@ -318,7 +449,7 @@ namespace {
             if (!ReadField(scope.player, 0x28, dead) || dead > 1) return false;
             // A real revival inside the callback owns the new living-controller state.
             if (dead == 0) return true;
-            const bool restoredLocal = !Alive(scope.local) ||
+            const bool restoredLocal = !scope.spoofDeath || !Alive(scope.local) ||
                 SDK::WriteSafe(static_cast<char*>(scope.local) + 0x38, uint8_t{1});
             const bool restoredGrab = !Alive(scope.grab) ||
                 SDK::WriteSafe(static_cast<char*>(scope.grab) + 0xE0, scope.grabMode);
@@ -340,18 +471,32 @@ namespace {
         --interactionDepth;
     }
 
-    InteractionScope BeginInteraction(void* instance, bool isDoor) {
+    enum class InteractionKind { Grab, Door, Flashlight };
+
+    bool MatchesInteraction(void* instance, InteractionKind kind, void* local, void* grab, void* door) {
+        if (kind == InteractionKind::Grab) return instance == grab;
+        if (kind == InteractionKind::Door) return instance == door;
+        void* flashlight = nullptr;
+        void* back = nullptr;
+        return ReadField(local, 0x168, flashlight) && Alive(flashlight) && instance == flashlight &&
+            ReadField(flashlight, 0x28, back) && back == local &&
+            ReadField(flashlight, 0x20, back) && back == grab;
+    }
+
+    InteractionScope BeginInteraction(void* instance, InteractionKind kind, bool spoofDeath = true) {
         InteractionScope scope;
         if (!interactionReady || !Features::bDeadInteraction.load()) return scope;
         void* player = nullptr;
         void* grab = nullptr;
         void* door = nullptr;
         void* local = LocalPC(player, grab, door);
-        if (!local || instance != (isDoor ? door : grab) || !DeadController(player, local) ||
+        if (!local || !MatchesInteraction(instance, kind, local, grab, door) ||
+            !DeadController(player, local) || !InteractionUIClosed(local) ||
             !ReadField(grab, 0xE0, scope.grabMode) || scope.grabMode > 1) return scope;
         scope.player = player;
         scope.local = local;
         scope.grab = grab;
+        scope.spoofDeath = spoofDeath;
         // Only the local input callbacks see living interaction mode. Player.dead is untouched.
         scope.changed = true;
         ++interactionDepth;
@@ -364,9 +509,9 @@ namespace {
         return scope;
     }
 
-    InteractionScope SafeBeginInteraction(void* instance, bool door) {
+    InteractionScope SafeBeginInteraction(void* instance, InteractionKind kind, bool spoofDeath = true) {
         __try {
-            return BeginInteraction(instance, door);
+            return BeginInteraction(instance, kind, spoofDeath);
         }
         __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
             ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
@@ -376,8 +521,8 @@ namespace {
         }
     }
 
-    void InvokeInput(Hooks::InputAction_t original, void* instance, void* context, void* info, bool door) {
-        const InteractionScope scope = SafeBeginInteraction(instance, door);
+    void InvokeInput(Hooks::InputAction_t original, void* instance, void* context, void* info, InteractionKind kind) {
+        const InteractionScope scope = SafeBeginInteraction(instance, kind);
         __try {
             original(instance, context, info);
         }
@@ -421,15 +566,29 @@ namespace {
 
     template<size_t Index>
     void InputHook(void* instance, void* context, void* info) {
-        if (GhostControl::BlocksInput(instance, Index == 12)) return;
+        constexpr auto kind = Index == 12 ? InteractionKind::Door :
+            Index == 13 ? InteractionKind::Flashlight : InteractionKind::Grab;
+        void* inputOwner = instance;
+        if constexpr (kind == InteractionKind::Flashlight) {
+            // Flashlight owns a grab reference, not the local-controller reference expected here.
+            if (!ReadField(instance, 0x20, inputOwner)) inputOwner = nullptr;
+        }
+        if (GhostControl::BlocksInput(inputOwner, kind == InteractionKind::Door)) return;
+        if (Features::bOverlayInput.load()) {
+            // Let native cancellation release held doors/items without granting interaction mode.
+            if (inputPhase.call && inputPhase.call(context, inputPhase.info) == 4)
+                Hooks::worldInputHooks[Index].original(instance, context, info);
+            return;
+        }
         if constexpr (Index == 1) {
             if (UpdatePickup(instance) && Pickup::HandleInput(context)) return;
         }
-        InvokeInput(Hooks::worldInputHooks[Index].original, instance, context, info, Index == 12);
+        InvokeInput(Hooks::worldInputHooks[Index].original, instance, context, info, kind);
     }
 
     void InvokeUpdate(Hooks::Update_t original, void* instance, void* info, bool door) {
-        const InteractionScope scope = SafeBeginInteraction(instance, door);
+        const InteractionScope scope = SafeBeginInteraction(instance,
+            door ? InteractionKind::Door : InteractionKind::Grab, door);
         __try {
             original(instance, info);
         }
@@ -439,6 +598,7 @@ namespace {
     }
 
     void ServiceWorldOptions() {
+        const bool overlayRestored = ServiceOverlay();
         if (pendingInteractionRestore.changed) {
             if (!RestoreInteraction(pendingInteractionRestore)) return;
             pendingInteractionRestore = {};
@@ -448,7 +608,8 @@ namespace {
             const bool controlRestored = GhostControl::Restore();
             const bool pickupRestored = Pickup::Restore();
             const bool recoveryRestored = Recovery::Reset();
-            if (interactionDepth == 0 && controlRestored && pickupRestored && recoveryRestored && SafeRestoreVisibility())
+            if (interactionDepth == 0 && movementDepth == 0 && overlayRestored && controlRestored && pickupRestored &&
+                recoveryRestored && SafeRestoreVisibility())
                 cleanupComplete.store(true);
             return;
         }
@@ -510,10 +671,13 @@ namespace {
         void* door = nullptr;
         void* local = interactionReady ? LocalPC(player, grab, door) : nullptr;
         next.deadInteractionAvailable = interactionReady && worldHealthy && !cleanupRequested.load() && local;
+        const bool uiClosed = local && InteractionUIClosed(local);
         next.deadInteractionActive = next.deadInteractionAvailable && Features::bDeadInteraction.load() &&
-            DeadController(player, local);
+            DeadController(player, local) && uiClosed;
         next.worldOptionsMessage = !worldHealthy ? "World options disabled after a native failure; see logs." :
-            "PC local input only; normal ownership/item restrictions remain. Visibility yields during hunts.";
+            Features::bDeadInteraction.load() && local && DeadController(player, local) && !uiClosed
+            ? "Dead interactions paused while UI owns input. Close the journal/menu and close the controls with HOME." :
+            "PC local input only; dead inventory limits and native restrictions remain. Visibility yields during hunts.";
     }
 
     void RejectRoster(Radar::Snapshot& next) {
@@ -525,42 +689,61 @@ namespace {
         next.actionRestriction = "Player roster unavailable; actions disabled.";
     }
 
-    bool BroadcastSanity(void* view, int sanity) {
+    bool BroadcastPlayerRpc(void* view, const char* method, int target, const int* sanity = nullptr) {
         uint32_t roots[3]{};
         __try {
-            void* name = sanityStringNew("NetworkedUpdatePlayerSanity");
-            if (!name || !(roots[0] = sanityPin(name, false))) return false;
-            void* parameters = sanityArrayNew(sanityObjectClass, 1);
-            if (!parameters || !(roots[1] = sanityPin(parameters, false)) ||
-                !SDK::IsReadable(parameters, 0x28)) return false;
-            float insanity = 100.0f - static_cast<float>(sanity);
-            void* value = sanityBox(sanityFloatClass, &insanity);
-            if (!value || !(roots[2] = sanityPin(value, false))) return false;
-            sanityBarrier(parameters, reinterpret_cast<void**>(static_cast<char*>(parameters) + 0x20), value);
-            int target = 0; // RpcTarget.All: the real sender is validated on every receiver, including this host.
+            void* name = rpcStringNew(method);
+            if (!name || !(roots[0] = rpcPin(name, false))) return false;
+            void* parameters = rpcArrayNew(rpcObjectClass, sanity ? 1 : 0);
+            if (!parameters || !(roots[1] = rpcPin(parameters, false))) return false;
+            if (sanity) {
+                if (!SDK::IsReadable(parameters, 0x28)) return false;
+                float insanity = 100.0f - static_cast<float>(*sanity);
+                void* value = sanityBox(sanityFloatClass, &insanity);
+                if (!value || !(roots[2] = rpcPin(value, false))) return false;
+                sanityBarrier(parameters, reinterpret_cast<void**>(static_cast<char*>(parameters) + 0x20), value);
+            }
             void* arguments[]{name, &target, parameters};
             void* exception = nullptr;
-            sanityInvoke(sanityRpc, view, arguments, &exception);
+            rpcInvoke(playerRpc, view, arguments, &exception);
             if (exception) {
-                Logger::Log("[ERROR] Sanity RPC raised a managed exception (%p).", exception);
+                Logger::Log("[ERROR] Player RPC %s raised a managed exception (%p).", method, exception);
                 return false;
             }
             return true;
         }
         __finally {
-            for (uint32_t root : roots) if (root) sanityUnpin(root);
+            for (uint32_t root : roots) if (root) rpcUnpin(root);
         }
     }
 
-    enum class ActionResult { Applied, Unavailable, Failed };
+    enum class ActionResult { Applied, Unavailable, Failed, ReviveRestricted };
 
     ActionResult InvokeAction(void* player, const Radar::Request& request) {
         __try {
-            if (request.action == Radar::Action::Kill) {
-                // The game's SnappedNeck enum value; the wrapper routes the sequence to the owner.
-                beginDeath.call(player, 1, beginDeath.info);
+            if (Radar::IsKillAction(request.action)) {
+                // Native death types: HangedMan = 0, SnappedNeck = 1.
+                beginDeath.call(player, request.action == Radar::Action::KillHangedMan ? 0 : 1, beginDeath.info);
             } else if (request.action == Radar::Action::Revive) {
-                revivePlayer.call(player, false, revivePlayer.info);
+                if (ReviveRestriction()) return ActionResult::ReviveRestricted;
+                void* corpse = nullptr;
+                void* animations = nullptr;
+                void* owner = nullptr;
+                void* animator = nullptr;
+                uint8_t reviving = 0;
+                if (!ReadField(player, 0x2B, reviving) || reviving != 0 ||
+                    !ReadField(player, 0xD8, corpse) || !Alive(corpse) ||
+                    !ReadField(corpse, 0xC0, owner) || owner != player ||
+                    !ReadField(corpse, 0x40, animator) || !Alive(animator) ||
+                    !ReadField(player, 0x100, animations) || !Alive(animations) ||
+                    !ReadField(animations, 0x28, owner) || owner != player ||
+                    !ReadField(animations, 0x110, animator) || !Alive(animator))
+                    return ActionResult::Unavailable;
+                void* view = playerView.call(player, playerView.info);
+                if (!Alive(view)) return ActionResult::Unavailable;
+                // RevivePlayer also triggers animation on the caller's replica. Use only its
+                // AllViaServer RPC so the native receiver owns remote-player setup and animation.
+                return BroadcastPlayerRpc(view, "Revive", 5) ? ActionResult::Applied : ActionResult::Failed;
             } else {
                 void* sanity = nullptr;
                 void* owner = nullptr;
@@ -568,7 +751,8 @@ namespace {
                 if (!sanityReady || !ReadField(player, 0x90, sanity) || !Alive(sanity) ||
                     !ReadField(sanity, 0x28, owner) || owner != player ||
                     !ReadField(sanity, 0x20, view) || !Alive(view)) return ActionResult::Unavailable;
-                return BroadcastSanity(view, request.sanity) ? ActionResult::Applied : ActionResult::Failed;
+                return BroadcastPlayerRpc(view, "NetworkedUpdatePlayerSanity", 0, &request.sanity)
+                    ? ActionResult::Applied : ActionResult::Failed;
             }
             return ActionResult::Applied;
         }
@@ -588,7 +772,7 @@ namespace {
         for (const auto& request : queued) {
             const auto target = std::find_if(next.players.begin(), next.players.end(),
                 [&](const Radar::Player& player) { return player.actorId == request.actorId; });
-            if ((request.action != Radar::Action::Kill && request.action != Radar::Action::Revive &&
+            if ((!Radar::IsKillAction(request.action) && request.action != Radar::Action::Revive &&
                 request.action != Radar::Action::SetSanity) ||
                 !next.actionsAllowed || request.generation != generation || now < request.requestedAt ||
                 now - request.requestedAt > 1500 || !Authority(currentRoom.call(currentRoom.info)) ||
@@ -610,8 +794,14 @@ namespace {
                 continue;
             }
             const ActionResult result = InvokeAction(player, request);
+            if (result == ActionResult::ReviveRestricted) {
+                Message("Revive rejected: native contract eligibility is unavailable or changed. Tarot cards or a monkey paw are required.");
+                continue;
+            }
             if (result == ActionResult::Unavailable) {
-                Message("Action rejected: the native sanity component or its network view is unavailable.");
+                Message(request.action == Radar::Action::Revive
+                    ? "Revive rejected: revival is already in progress or corpse, animation, or network view is unavailable."
+                    : "Action rejected: the native sanity component or its network view is unavailable.");
                 continue;
             }
             if (result == ActionResult::Failed) {
@@ -622,7 +812,8 @@ namespace {
             if (request.generation != generation) break;
             pending.push_back({request, now + 10000});
             target->pending = true;
-            Message(std::string(request.action == Radar::Action::Kill ? "Kill" :
+            Message(std::string(request.action == Radar::Action::KillHangedMan ? "Hanged Man kill" :
+                request.action == Radar::Action::Kill ? "Kill" :
                 request.action == Radar::Action::Revive ? "Revive" : "Sanity change") +
                 " requested for " + target->name + "; awaiting game confirmation.");
         }
@@ -638,7 +829,7 @@ namespace {
                 std::fabs(target->sanity - item->request.sanity) <= 0.5f) {
                 Message("Requested sanity observed for " + target->name + "; remote replication is not independently verified.");
             } else if (item->request.action != Radar::Action::SetSanity && target->lifeValid &&
-                target->dead == (item->request.action == Radar::Action::Kill) && !target->dying) {
+                target->dead == Radar::IsKillAction(item->request.action) && !target->dying) {
                 Message("Game confirmed the requested life state for " + target->name + ".");
             } else if (now >= item->deadline) {
                 Message("No requested-state confirmation received for " + target->name + "; request not retried.");
@@ -652,7 +843,7 @@ namespace {
     }
 }
 
-Hooks::WorldInputHook Hooks::worldInputHooks[13] = {
+Hooks::WorldInputHook Hooks::worldInputHooks[14] = {
     {"PCPropGrab", "OnInteract", nullptr, InputHook<0>},
     {"PCPropGrab", "OnPickup", nullptr, InputHook<1>},
     {"PCPropGrab", "OnPrimaryUse", nullptr, InputHook<2>},
@@ -665,8 +856,86 @@ Hooks::WorldInputHook Hooks::worldInputHooks[13] = {
     {"PCPropGrab", "OnSelectInventorySlot3", nullptr, InputHook<9>},
     {"PCPropGrab", "OnSelectInventorySlot4", nullptr, InputHook<10>},
     {"PCPropGrab", "OnInventorySwap", nullptr, InputHook<11>},
-    {"DragRigidbodyUse", "OnInteract", nullptr, InputHook<12>}
+    {"DragRigidbodyUse", "OnInteract", nullptr, InputHook<12>},
+    {"PCFlashlight", "OnTorchUse", nullptr, InputHook<13>}
 };
+
+void Hooks::hkCursorLock(int32_t state, void* methodInfo) {
+    __try {
+        if (OverlayRequested() && CaptureCursor()) {
+            cursorState.lock = state;
+            state = 0;
+        } else if (cursorState.active) {
+            cursorState.lock = state;
+        }
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+        ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        overlayHealthy = false;
+        Logger::Log("[ERROR] Overlay: cursor-lock capture faulted; override disabled.");
+    }
+    oCursorLock(state, methodInfo);
+}
+
+void Hooks::hkCursorVisible(bool visible, void* methodInfo) {
+    __try {
+        if (OverlayRequested() && CaptureCursor()) {
+            cursorState.visible = visible;
+            visible = true;
+        } else if (cursorState.active) {
+            cursorState.visible = visible;
+        }
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+        ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        overlayHealthy = false;
+        Logger::Log("[ERROR] Overlay: cursor-visibility capture faulted; override disabled.");
+    }
+    oCursorVisible(visible, methodInfo);
+}
+
+void Hooks::UpdatePlayerInput(Update_t original, void* instance, void* methodInfo) {
+    MovementScope scope;
+    __try {
+        void* player = nullptr;
+        void* grab = nullptr;
+        void* door = nullptr;
+        void* controller = nullptr;
+        void* local = OverlayRequested() ? LocalPC(player, grab, door, false) : nullptr;
+        if (local && ReadField(local, 0x128, controller) && controller == instance && Alive(controller)) {
+            scope.controller = controller;
+            if (!ReadField(controller, 0x20, scope.movement) || scope.movement > 1 ||
+                !ReadField(controller, 0x21, scope.look) || scope.look > 1) {
+                overlayHealthy = false;
+                Logger::Log("[ERROR] Overlay: local movement layout invalid; input override disabled.");
+            } else {
+                scope.changed = true;
+                ++movementDepth;
+                if (!SDK::WriteSafe(static_cast<char*>(controller) + 0x20, uint8_t{0}) ||
+                    !SDK::WriteSafe(static_cast<char*>(controller) + 0x21, uint8_t{0})) {
+                    overlayHealthy = false;
+                    Logger::Log("[ERROR] Overlay: local movement freeze failed; restoration pending.");
+                }
+            }
+        }
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+        ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        overlayHealthy = false;
+        Logger::Log("[ERROR] Overlay: local movement lookup faulted; input override disabled.");
+    }
+    __try {
+        GhostControl::PlayerUpdate(original, instance, methodInfo);
+    }
+    __finally {
+        if (!RestoreMovement(scope)) {
+            pendingMovementRestore = scope;
+            overlayHealthy = false;
+            Logger::Log("[ERROR] Overlay: movement restoration failed; unload blocked until restored.");
+        }
+        if (scope.changed) --movementDepth;
+    }
+}
 
 void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
     if (!SDK::class_get_fields || !SDK::field_get_type || !SDK::class_get_type ||
@@ -684,6 +953,7 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
     void* physics = imageFor("UnityEngine.PhysicsModule");
     void* navigation = imageFor("UnityEngine.AIModule");
     void* input = imageFor("Unity.InputSystem");
+    void* animation = imageFor("UnityEngine.AnimationModule");
     bool methods = true;
     methods &= objectAlive.Bind(unityImage, "UnityEngine", "Object", "op_Implicit", 1);
     methods &= playerList.Bind(photon, "Photon.Pun", "PhotonNetwork", "get_PlayerList", 0);
@@ -697,7 +967,8 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
     actionsReady &= masterClient.Bind(photon, "Photon.Pun", "PhotonNetwork", "get_IsMasterClient", 0);
     actionsReady &= roomVisible.Bind(realtime, "Photon.Realtime", "Room", "get_IsVisible", 0);
     actionsReady &= beginDeath.Bind(image, "", "Player", "BeginDeathSequence", 1);
-    actionsReady &= revivePlayer.Bind(image, "", "Player", "RevivePlayer", 1);
+    actionsReady &= playerView.Bind(photon, "Photon.Pun", "MonoBehaviourPun", "get_photonView", 0);
+    const bool rpcReady = InitPlayerRpc(photon, core);
     rotation.Bind(unityImage, "UnityEngine", "Transform", "get_rotation_Injected", 1);
     headTransform.Bind(unityImage, "UnityEngine", "GameObject", "get_transform", 0);
     findBone.Bind(unityImage, "UnityEngine", "Object", "FindObjectOfType", 1);
@@ -714,7 +985,27 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
         FieldMatches(playerClass, 0x90, sanityClass) &&
         FieldMatches(sanityClass, 0x28, playerClass) &&
         FieldMatches(sanityClass, 0x30, floatClass);
-    sanityReady = layout && InitSanity(image, photon, core);
+    void* viewClass = photon ? SDK::class_from_name(photon, "Photon.Pun", "PhotonView") : nullptr;
+    void* corpseClass = SDK::class_from_name(image, "", "DeadPlayer");
+    void* animationsClass = SDK::class_from_name(image, "", "PlayerCharacterAnimations");
+    void* animatorClass = animation ? SDK::class_from_name(animation, "UnityEngine", "Animator") : nullptr;
+    void* revive = playerClass ? SDK::get_method(playerClass, "Revive", 1) : nullptr;
+    void* receive = sanityClass ? SDK::get_method(sanityClass, "NetworkedUpdatePlayerSanity", 2) : nullptr;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"GameAssembly.dll"));
+    uintptr_t reviveCode = 0, receiveCode = 0, deathCode = 0;
+    actionsReady &= rpcReady && FieldMatches(playerClass, 0x2B, booleanClass) &&
+        FieldMatches(playerClass, 0xD8, corpseClass) && FieldMatches(corpseClass, 0xC0, playerClass) &&
+        FieldMatches(corpseClass, 0x40, animatorClass) &&
+        FieldMatches(playerClass, 0x100, animationsClass) && FieldMatches(animationsClass, 0x28, playerClass) &&
+        FieldMatches(animationsClass, 0x110, animatorClass) &&
+        SDK::ReadSafe(revive, reviveCode) && reviveCode == base + 0xD2EB50 &&
+        SDK::ReadSafe(beginDeath.info, deathCode) && deathCode == base + 0xD2D2C0;
+    reviveReady = InitReviveEligibility(image);
+    sanityReady = layout && rpcReady && sanityBox && sanityBarrier && sanityFloatClass &&
+        FieldMatches(sanityClass, 0x20, viewClass) &&
+        SDK::ReadSafe(receive, receiveCode) && receiveCode == base + 0xDA5570;
+    Logger::Log("[RADAR] Native life controls %s.", actionsReady ? "ready" : "unavailable");
+    Logger::Log("[RADAR] Native revive contract validation %s.", reviveReady ? "ready" : "unavailable");
     Logger::Log("[RADAR] Native sanity controls %s.", sanityReady ? "ready" : "unavailable");
     void* boneClass = SDK::class_from_name(image, "", "DNAEvidence");
     void* collectableClass = SDK::class_from_name(image, "", "Collectable");
@@ -731,6 +1022,12 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
     localPCClass = SDK::class_from_name(image, "", "LocalPCPlayer");
     void* grabClass = SDK::class_from_name(image, "", "PCPropGrab");
     void* doorClass = SDK::class_from_name(image, "", "DragRigidbodyUse");
+    void* journalClass = SDK::class_from_name(image, "", "JournalController");
+    void* menuClass = SDK::class_from_name(image, "", "PCMenu");
+    void* controllerClass = SDK::class_from_name(image, "", "FirstPersonController");
+    void* flashlightClass = SDK::class_from_name(image, "", "PCFlashlight");
+    void* torchInput = flashlightClass ? SDK::get_method(flashlightClass, "OnTorchUse", 1) : nullptr;
+    uintptr_t torchCode = 0;
     void* renderers = modelClass && SDK::get_field ? SDK::get_field(modelClass, "myRends") : nullptr;
     Method<Visibility_t> visibility;
     visibilityReady = FieldMatches(ghostClass, 0x60, modelClass) &&
@@ -746,7 +1043,13 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
         FieldMatches(localClass, 0x20, playerClass) && FieldMatches(localClass, 0x38, booleanClass) &&
         FieldMatches(localPCClass, 0x148, grabClass) && FieldMatches(localPCClass, 0x158, doorClass) &&
         FieldMatches(grabClass, 0x20, localPCClass) && FieldMatches(grabClass, 0xE0, booleanClass) &&
-        FieldMatches(doorClass, 0x58, localClass);
+        FieldMatches(doorClass, 0x58, localClass) &&
+        FieldMatches(localPCClass, 0x168, flashlightClass) &&
+        FieldMatches(flashlightClass, 0x20, grabClass) && FieldMatches(flashlightClass, 0x28, localClass) &&
+        FieldMatches(localClass, 0x28, journalClass) && FieldMatches(journalClass, 0xB8, booleanClass) &&
+        FieldMatches(localPCClass, 0x130, menuClass) && FieldMatches(menuClass, 0x28, localPCClass) &&
+        FieldMatches(menuClass, 0x20, booleanClass) && FieldMatches(menuClass, 0x21, booleanClass) &&
+        SDK::ReadSafe(torchInput, torchCode) && torchCode == base + 0xC77D10;
     interactionReady &= grabUpdate.Bind(image, "", "PCPropGrab", "Update", 0);
     interactionReady &= doorUpdate.Bind(image, "", "DragRigidbodyUse", "FixedUpdate", 0);
     for (auto& input : worldInputHooks) {
@@ -758,6 +1061,26 @@ void Hooks::InitRadar(void* domain, void* image, void* unityImage) {
     oDoorFixedUpdate = interactionReady ? doorUpdate.call : nullptr;
     if (!interactionReady)
         for (auto& input : worldInputHooks) input.original = nullptr;
+    Method<CursorLock_t> setLock;
+    Method<CursorVisible_t> setVisible;
+    void* interact = grabClass ? SDK::get_method(grabClass, "OnInteract", 1) : nullptr;
+    void* contextClass = interact && SDK::method_get_param
+        ? SDK::class_from_type(SDK::method_get_param(interact, 0)) : nullptr;
+    inputPhase.info = contextClass ? SDK::get_method(contextClass, "get_phase", 0) : nullptr;
+    inputPhase.call = nullptr;
+    if (inputPhase.info) SDK::ReadSafe(inputPhase.info, inputPhase.call);
+    overlayReady = cursorLock.Bind(unityImage, "UnityEngine", "Cursor", "get_lockState", 0);
+    overlayReady &= cursorVisible.Bind(unityImage, "UnityEngine", "Cursor", "get_visible", 0);
+    overlayReady &= setLock.Bind(unityImage, "UnityEngine", "Cursor", "set_lockState", 1);
+    overlayReady &= setVisible.Bind(unityImage, "UnityEngine", "Cursor", "set_visible", 1);
+    overlayReady &= FieldMatches(localPCClass, 0x128, controllerClass) &&
+        FieldMatches(controllerClass, 0x20, booleanClass) && FieldMatches(controllerClass, 0x21, booleanClass);
+    overlayReady &= inputPhase.call != nullptr;
+    oCursorLock = overlayReady ? setLock.call : nullptr;
+    oCursorVisible = overlayReady ? setVisible.call : nullptr;
+    cursorLockInfo = setLock.info;
+    cursorVisibleInfo = setVisible.info;
+    Logger::Log("[INPUT] Overlay cursor ownership %s.", overlayReady ? "ready" : "unavailable");
     GhostControl::Initialize(image, unityImage, navigation, physics);
     Pickup::Initialize(image, unityImage, physics, input);
     Recovery::Initialize(image, unityImage);
@@ -811,6 +1134,10 @@ void UpdateRadarCore() {
     next.generation = generation;
     next.sampledAt = now;
     next.actionsAllowed = Authority(room);
+    const char* reviveRestriction = next.actionsAllowed ? ReviveRestriction() :
+        "Revive requires an active private/offline match with host authority.";
+    next.reviveAvailable = reviveRestriction == nullptr;
+    next.reviveRestriction = reviveRestriction ? reviveRestriction : "";
     next.sanityAvailable = sanityReady && actionsHealthy;
     next.actionRestriction = next.actionsAllowed ? "Private/offline host controls enabled." :
         "Actions require an active match and private/offline host authority.";
@@ -955,6 +1282,7 @@ void Hooks::EndGhostTransition() {
 }
 
 bool Hooks::PrepareWorldOptionsForUnload() {
+    Features::bOverlayInput.store(false);
     Features::bGhostVisible.store(false);
     Features::bDeadInteraction.store(false);
     GhostControl::desired.store(false);

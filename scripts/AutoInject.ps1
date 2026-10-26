@@ -52,7 +52,7 @@ $shadowDll = Join-Path $shadowDir "Zackmophobia_$stamp.dll"
 # Use a unique shadow copy so the main build output can be rebuilt immediately.
 Copy-Item -Path $builtDllPath -Destination $shadowDll -Force
 
-Write-Host "[INFO] Launching game with injected shadow DLL:"
+Write-Host "[INFO] Reusing the running game if present; otherwise launching it with shadow DLL:"
 Write-Host "       $shadowDll"
 
 $argList = @($GameExe, $shadowDll)
@@ -65,5 +65,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "LaunchWithDll failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "[OK] Injection launch complete."
-Write-Host "[TIP] Press END in-game to unload before rebuilding/reinjecting."
+Write-Host "[OK] Injection complete."
+Write-Host "[TIP] Press END in-game and wait for unload before reinjecting."

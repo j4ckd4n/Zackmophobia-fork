@@ -45,7 +45,7 @@ namespace Hooks {
                setMovement(SPRINT_SPEED_IDX, Features::fSprintValue); // Sprint Speed
           }
 
-          GhostControl::PlayerUpdate(oFPCUpdate, instance, methodInfo);
+          UpdatePlayerInput(oFPCUpdate, instance, methodInfo);
           UpdateRadar();
      }
 

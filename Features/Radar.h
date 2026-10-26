@@ -59,13 +59,19 @@ namespace Radar {
         bool deadInteractionActive = false;
         std::string worldOptionsMessage;
         bool actionsAllowed = false;
+        bool reviveAvailable = false;
+        std::string reviveRestriction = "Revive eligibility is unavailable.";
         bool sanityAvailable = false;
         bool remoteSanityAllowed = false;
         std::string actionRestriction = "Waiting for game data.";
         std::string message;
     };
 
-    enum class Action { Kill, Revive, SetSanity };
+    enum class Action { Kill, Revive, SetSanity, KillHangedMan };
+
+    inline bool IsKillAction(Action action) {
+        return action == Action::Kill || action == Action::KillHangedMan;
+    }
 
     struct Request {
         int actorId;
@@ -125,8 +131,10 @@ namespace Radar {
             return reject("Request rejected: radar data is stale.");
         if (!snapshot.actionsAllowed)
             return reject("Request rejected: private/offline host authority is required.");
-        if (action != Action::Kill && action != Action::Revive && action != Action::SetSanity)
+        if (!IsKillAction(action) && action != Action::Revive && action != Action::SetSanity)
             return reject("Request rejected: unknown player action.");
+        if (action == Action::Revive && !snapshot.reviveAvailable)
+            return reject(snapshot.reviveRestriction.c_str());
         auto player = std::find_if(snapshot.players.begin(), snapshot.players.end(),
             [actorId](const Player& entry) { return entry.actorId == actorId; });
         if (player == snapshot.players.end() || !player->instance || !player->lifeValid)

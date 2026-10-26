@@ -6,6 +6,7 @@
 namespace Features {
     inline std::atomic<bool> bGhostVisible{false};
     inline std::atomic<bool> bDeadInteraction{false};
+    inline std::atomic<bool> bOverlayInput{false};
     inline bool bSpeedEnabled     = false;
     inline float fSprintValue     = 6.0f;
     inline bool bGhostTypeEnabled = true;

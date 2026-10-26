@@ -48,6 +48,9 @@
     <ClInclude Include="Features\Radar.h">
       <Filter>Features</Filter>
     </ClInclude>
+    <ClInclude Include="Features\Reporting.h">
+      <Filter>Features</Filter>
+    </ClInclude>
     <ClInclude Include="Features\GhostControl.h">
       <Filter>Features</Filter>
     </ClInclude>

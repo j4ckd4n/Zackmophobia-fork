@@ -15,15 +15,19 @@ namespace {
     bool pickupAllowed = false, consumePickup = false;
     bool controlOwnsPlayer = false;
     unsigned pickupInputs = 0;
+    void* blockedInputOwner = nullptr;
 }
 
 void GhostControl::Initialize(void*, void*, void*, void*) {}
 void GhostControl::SetHooksInstalled(bool) {}
 void GhostControl::Update(const Context&) {}
+void GhostControl::PlayerUpdate(UpdateFunction original, void* instance, void* info) { original(instance, info); }
 GhostControl::Snapshot GhostControl::Read() { return {}; }
 bool GhostControl::Restore() { return true; }
 bool GhostControl::ControlsPlayer(void*) { return controlOwnsPlayer; }
-bool GhostControl::BlocksInput(void*, bool) { return false; }
+bool GhostControl::BlocksInput(void* instance, bool door) {
+    return !door && blockedInputOwner && instance == blockedInputOwner;
+}
 bool Pickup::Initialize(void*, void*, void*, void*) { return false; }
 void Pickup::Update(void* camera, void* local, bool allowed, bool, uint64_t, void*) {
     pickupCamera = camera;
@@ -124,8 +128,18 @@ namespace {
         void* entries[3]{};
     } roster;
     PlayerArray cursedArray, rendererArray;
+    struct ReviveSources {
+        char header[0x18]{};
+        uintptr_t count = 1;
+        int32_t entries[8]{};
+    } reviveSources;
+    std::array<char, 0x40> levelValuesObject{};
+    std::array<char, 0xB8> difficultyObject{};
 
     std::array<char, 0x180> localAvatar{}, remoteAvatar{}, replacement{};
+    std::array<char, 0xC8> localCorpse{}, remoteCorpse{};
+    std::array<char, 0x120> localAnimations{}, remoteAnimations{};
+    std::array<char, 0x20> localAnimator{}, remoteAnimator{};
     std::array<char, 0x40> localSanity{}, remoteSanity{}, localOwner{}, remoteOwner{};
     std::array<char, 0x80> ghostObject{}, boneObject{};
     std::array<char, 0xA0> collectableObject{};
@@ -135,6 +149,10 @@ namespace {
     std::array<char, 0x180> localController{};
     std::array<char, 0x100> grabController{};
     std::array<char, 0x80> doorController{};
+    std::array<char, 0x48> flashlightController{}, remoteFlashlight{};
+    std::array<char, 0xC0> journalObject{};
+    std::array<char, 0x48> menuController{};
+    std::array<char, 0xA0> movementController{};
     Transform localPose, remotePose, ghostPose, bonePose, headPose, cursePoseOne, cursePoseTwo, cursePoseThree;
     void* activeRoom = roomObject.data();
     int transformMethodMarker = 0, headMethodMarker = 0, boneTypeMarker = 0;
@@ -144,8 +162,15 @@ namespace {
     bool isHost = true, isPrivate = true, isInRoom = true;
     bool replaceTarget = false, faultPosition = false, faultAction = false;
     bool rejectSanity = false, ignoreSanity = false;
+    bool reviveRpc = false, rejectRevive = false;
+    void* expectedReviveView = nullptr;
     void* destroyedObject = nullptr;
     int kills = 0, revives = 0, headReads = 0;
+    int lastDeathType = -1, cursorMode = 1;
+    bool cursorShown = false;
+    void* lastDeathPlayer = nullptr;
+    unsigned nativeInputs = 0;
+    bool faultCursorRestore = false;
     int localActor = 1, remoteActor = 2;
     int sanityCalls = 0, sanityRoots = 0, rpcMarker = 0, objectMarker = 0, floatMarker = 0;
     float boxedInsanity = 0;
@@ -191,9 +216,17 @@ namespace {
         ready = actionsReady = actionsHealthy = boneLayoutValid = true;
         worldHealthy = true;
         visibilityReady = interactionReady = false;
-        ghostTransitions = interactionDepth = 0;
+        overlayReady = false;
+        overlayHealthy = true;
+        cursorState = {};
+        pendingMovementRestore = {};
+        Features::bOverlayInput.store(false);
+        GhostControl::inputCaptured.store(false);
+        inputPhase.call = nullptr;
+        ghostTransitions = interactionDepth = movementDepth = 0;
         pendingInteractionRestore = {};
         faultRendererRestore = false;
+        blockedInputOwner = nullptr;
         cleanupRequested.store(false);
         cleanupComplete.store(false);
         Hooks::SetWorldHooksInstalled(true);
@@ -203,17 +236,26 @@ namespace {
         findCursed.call = nullptr;
         rosterUnavailable = replaceTarget = faultPosition = faultAction = false;
         rejectSanity = ignoreSanity = false;
+        reviveRpc = rejectRevive = false;
+        expectedReviveView = remoteOwner.data();
         sanityCalls = sanityRoots = 0;
         sanityReady = true;
-        sanityRpc = &rpcMarker;
-        sanityObjectClass = &objectMarker;
+        reviveReady = true;
+        levelValues.call = [](void*) -> void* { return levelValuesObject.data(); };
+        reviveSources = {};
+        reviveSources.entries[0] = 1;
+        Put(levelValuesObject, 0x38, static_cast<void*>(difficultyObject.data()));
+        Put(difficultyObject, 0xB0, static_cast<void*>(&reviveSources));
+        playerRpc = &rpcMarker;
+        rpcObjectClass = &objectMarker;
         sanityFloatClass = &floatMarker;
-        sanityStringNew = [](const char* name) -> void* {
-            assert(std::strcmp(name, "NetworkedUpdatePlayerSanity") == 0);
+        rpcStringNew = [](const char* name) -> void* {
+            reviveRpc = std::strcmp(name, "Revive") == 0;
+            assert(reviveRpc || std::strcmp(name, "NetworkedUpdatePlayerSanity") == 0);
             return sanityName.data();
         };
-        sanityArrayNew = [](void* klass, uintptr_t count) -> void* {
-            assert(klass == &objectMarker && count == 1);
+        rpcArrayNew = [](void* klass, uintptr_t count) -> void* {
+            assert(klass == &objectMarker && count == (reviveRpc ? 0 : 1));
             return sanityParameters.data();
         };
         sanityBox = [](void* klass, void* value) -> void* {
@@ -226,12 +268,20 @@ namespace {
                 slot == reinterpret_cast<void**>(sanityParameters.data() + 0x20) && value == sanityValue.data());
             *slot = value;
         };
-        sanityPin = [](void*, bool) -> uint32_t { return static_cast<uint32_t>(++sanityRoots); };
-        sanityUnpin = [](uint32_t) { --sanityRoots; };
-        sanityInvoke = [](void* method, void* view, void** arguments, void** exception) -> void* {
-            assert(method == &rpcMarker && sanityRoots == 3);
-            assert(arguments[0] == sanityName.data() && *static_cast<int*>(arguments[1]) == 0 &&
+        rpcPin = [](void*, bool) -> uint32_t { return static_cast<uint32_t>(++sanityRoots); };
+        rpcUnpin = [](uint32_t) { --sanityRoots; };
+        rpcInvoke = [](void* method, void* view, void** arguments, void** exception) -> void* {
+            assert(method == &rpcMarker && sanityRoots == (reviveRpc ? 2 : 3));
+            assert(arguments[0] == sanityName.data() &&
+                *static_cast<int*>(arguments[1]) == (reviveRpc ? 5 : 0) &&
                 arguments[2] == sanityParameters.data());
+            if (reviveRpc) {
+                assert(view == expectedReviveView);
+                ++revives;
+                if (faultAction) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+                if (rejectRevive) *exception = &rpcMarker;
+                return nullptr;
+            }
             ++sanityCalls;
             if (faultAction) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
             if (rejectSanity) *exception = &rpcMarker;
@@ -245,10 +295,26 @@ namespace {
         isHost = isPrivate = isInRoom = true;
         localActor = 1; remoteActor = 2;
         kills = revives = headReads = 0;
+        lastDeathType = -1;
+        lastDeathPlayer = nullptr;
+        nativeInputs = 0;
+        faultCursorRestore = false;
         localAvatar.fill(0);
         remoteAvatar.fill(0);
         replacement.fill(0);
         ghostObject.fill(0);
+        Put(localAvatar, 0xD8, static_cast<void*>(localCorpse.data()));
+        Put(remoteAvatar, 0xD8, static_cast<void*>(remoteCorpse.data()));
+        Put(localAvatar, 0x100, static_cast<void*>(localAnimations.data()));
+        Put(remoteAvatar, 0x100, static_cast<void*>(remoteAnimations.data()));
+        Put(localAnimations, 0x28, static_cast<void*>(localAvatar.data()));
+        Put(remoteAnimations, 0x28, static_cast<void*>(remoteAvatar.data()));
+        Put(localAnimations, 0x110, static_cast<void*>(localAnimator.data()));
+        Put(remoteAnimations, 0x110, static_cast<void*>(remoteAnimator.data()));
+        Put(localCorpse, 0x40, static_cast<void*>(localAnimator.data()));
+        Put(remoteCorpse, 0x40, static_cast<void*>(remoteAnimator.data()));
+        Put(localCorpse, 0xC0, static_cast<void*>(localAvatar.data()));
+        Put(remoteCorpse, 0xC0, static_cast<void*>(remoteAvatar.data()));
         Put(localAvatar, 0x40, static_cast<void*>(headObject.data()));
         Put(remoteAvatar, 0x40, static_cast<void*>(headObject.data()));
         Put(localAvatar, 0x90, static_cast<void*>(localSanity.data()));
@@ -314,13 +380,15 @@ namespace {
             return boneObject.data();
         };
         beginDeath.call = [](void* player, int32_t deathType, void*) {
-            assert(player == remoteAvatar.data() && deathType == 1);
+            assert(player == remoteAvatar.data() || player == localAvatar.data());
+            lastDeathType = deathType;
+            lastDeathPlayer = player;
             ++kills;
             if (faultAction) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
         };
-        revivePlayer.call = [](void* player, bool removeHighPriestess, void*) {
-            assert(player == remoteAvatar.data() && !removeHighPriestess);
-            ++revives;
+        playerView.call = [](void* player, void*) -> void* {
+            assert(player == localAvatar.data() || player == remoteAvatar.data());
+            return player == localAvatar.data() ? localOwner.data() : remoteOwner.data();
         };
     }
 
@@ -369,6 +437,11 @@ namespace {
         localController.fill(0);
         grabController.fill(0);
         doorController.fill(0);
+        flashlightController.fill(0);
+        remoteFlashlight.fill(0);
+        journalObject.fill(0);
+        menuController.fill(0);
+        movementController.fill(0);
         Put(ghostObject, 0x60, static_cast<void*>(modelObject.data()));
         Put(modelObject, 0x28, static_cast<void*>(ghostObject.data()));
         Put(modelObject, 0x30, static_cast<void*>(&rendererArray));
@@ -397,10 +470,17 @@ namespace {
         };
         Put(localAvatar, 0x110, static_cast<void*>(localController.data()));
         Put(localController, 0x20, static_cast<void*>(localAvatar.data()));
+        Put(localController, 0x28, static_cast<void*>(journalObject.data()));
+        Put(localController, 0x130, static_cast<void*>(menuController.data()));
+        Put(menuController, 0x28, static_cast<void*>(localController.data()));
+        Put(localController, 0x128, static_cast<void*>(movementController.data()));
         Put(localController, 0x148, static_cast<void*>(grabController.data()));
         Put(localController, 0x158, static_cast<void*>(doorController.data()));
         Put(grabController, 0x20, static_cast<void*>(localController.data()));
         Put(doorController, 0x58, static_cast<void*>(localController.data()));
+        Put(localController, 0x168, static_cast<void*>(flashlightController.data()));
+        Put(flashlightController, 0x20, static_cast<void*>(grabController.data()));
+        Put(flashlightController, 0x28, static_cast<void*>(localController.data()));
     }
 
     void TestLobbyPickup() {
@@ -546,7 +626,8 @@ namespace {
     }
 
     void AssertInteractionScope(void* instance, void*) {
-        assert(instance == grabController.data() || instance == doorController.data());
+        assert(instance == grabController.data() || instance == doorController.data() ||
+            instance == flashlightController.data());
         uint8_t actualDead = 0, localDead = 1, mode = 0, blocked = 0;
         assert(ReadField(localAvatar.data(), 0x28, actualDead) && actualDead == 1);
         assert(ReadField(localController.data(), 0x38, localDead) && localDead == 0);
@@ -554,9 +635,9 @@ namespace {
         assert(ReadField(grabController.data(), 0xE1, blocked) && blocked == 1);
     }
 
-    bool InvokeFaultingInput() {
+    bool InvokeFaultingInput(size_t index = 0, void* instance = grabController.data()) {
         __try {
-            Hooks::worldInputHooks[0].hook(grabController.data(), nullptr, nullptr);
+            Hooks::worldInputHooks[index].hook(instance, nullptr, nullptr);
             return true;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -574,37 +655,45 @@ namespace {
         for (auto& input : Hooks::worldInputHooks) {
             input.original = [](void* instance, void*, void*) { AssertInteractionScope(instance, nullptr); };
             const bool door = std::strcmp(input.type, "DragRigidbodyUse") == 0;
-            input.hook(door ? doorController.data() : grabController.data(), nullptr, nullptr);
+            const bool torch = std::strcmp(input.type, "PCFlashlight") == 0;
+            input.hook(torch ? flashlightController.data() :
+                door ? doorController.data() : grabController.data(), nullptr, nullptr);
             assert(DeadController(localAvatar.data(), localController.data()) && interactionDepth == 0);
             uint8_t mode = 1;
             assert(ReadField(grabController.data(), 0xE0, mode) && mode == 0);
         }
-        Hooks::oPropGrabUpdate = AssertInteractionScope;
+        Hooks::oPropGrabUpdate = [](void* instance, void*) {
+            assert(instance == grabController.data());
+            assert(DeadController(localAvatar.data(), localController.data()));
+            uint8_t mode = 0;
+            assert(ReadField(instance, 0xE0, mode) && mode == 1);
+        };
         Hooks::oDoorFixedUpdate = AssertInteractionScope;
         Hooks::hkPropGrabUpdate(grabController.data(), nullptr);
         Hooks::hkDoorFixedUpdate(doorController.data(), nullptr);
         assert(DeadController(localAvatar.data(), localController.data()));
-        assert(!BeginInteraction(remoteAvatar.data(), false).changed);
+        assert(!BeginInteraction(remoteAvatar.data(), InteractionKind::Grab).changed);
         Features::bDeadInteraction.store(false);
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         Features::bDeadInteraction.store(true);
         isHost = false;
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         isHost = true;
         isPrivate = false;
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         isPrivate = true;
         Put(localAvatar, 0x28, uint8_t{0});
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         Put(localAvatar, 0x28, uint8_t{1});
         Put(localController, 0x38, uint8_t{0});
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         Put(localController, 0x38, uint8_t{1});
         localPCClass = nullptr;
-        assert(!Sample().deadInteractionAvailable && !BeginInteraction(grabController.data(), false).changed);
+        assert(!Sample().deadInteractionAvailable &&
+            !BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         localPCClass = &pcClassMarker;
         cleanupRequested.store(true);
-        assert(!BeginInteraction(grabController.data(), false).changed);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
         cleanupRequested.store(false);
         Hooks::worldInputHooks[0].original = [](void*, void*, void*) {
             RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
@@ -640,6 +729,215 @@ namespace {
         assert(DeadController(localAvatar.data(), localController.data()));
         assert(ReadField(grabController.data(), 0xE0, mode) && mode == 0);
         cleanupRequested.store(false);
+    }
+
+    void TestDeadFlashlight() {
+        ConfigureWorld();
+        Put(localAvatar, 0x28, uint8_t{1});
+        Put(localController, 0x38, uint8_t{1});
+        Put(grabController, 0xE1, uint8_t{1});
+        Features::bDeadInteraction.store(true);
+        auto& torch = Hooks::worldInputHooks[13];
+        assert(!BeginInteraction(remoteFlashlight.data(), InteractionKind::Flashlight).changed);
+        Put(flashlightController, 0x20, static_cast<void*>(remoteAvatar.data()));
+        assert(!BeginInteraction(flashlightController.data(), InteractionKind::Flashlight).changed);
+        Put(flashlightController, 0x20, static_cast<void*>(grabController.data()));
+        Put(flashlightController, 0x28, static_cast<void*>(remoteAvatar.data()));
+        assert(!BeginInteraction(flashlightController.data(), InteractionKind::Flashlight).changed);
+        Put(flashlightController, 0x28, static_cast<void*>(localController.data()));
+        destroyedObject = flashlightController.data();
+        assert(!BeginInteraction(flashlightController.data(), InteractionKind::Flashlight).changed);
+        destroyedObject = nullptr;
+
+        torch.original = [](void*, void*, void*) { assert(false); };
+        blockedInputOwner = grabController.data();
+        torch.hook(flashlightController.data(), nullptr, nullptr);
+        assert(interactionDepth == 0 && DeadController(localAvatar.data(), localController.data()));
+        blockedInputOwner = nullptr;
+
+        torch.original = [](void* instance, void*, void*) {
+            AssertInteractionScope(instance, nullptr);
+            assert(interactionDepth == 1);
+        };
+        Hooks::worldInputHooks[0].original = [](void* instance, void*, void*) {
+            AssertInteractionScope(instance, nullptr);
+            Hooks::worldInputHooks[13].hook(flashlightController.data(), nullptr, nullptr);
+            AssertInteractionScope(instance, nullptr);
+            assert(interactionDepth == 1);
+        };
+        Hooks::worldInputHooks[0].hook(grabController.data(), nullptr, nullptr);
+        assert(interactionDepth == 0 && DeadController(localAvatar.data(), localController.data()));
+
+        torch.original = [](void* instance, void*, void*) {
+            AssertInteractionScope(instance, nullptr);
+            RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+        };
+        assert(!InvokeFaultingInput(13, flashlightController.data()));
+        assert(interactionDepth == 0 && DeadController(localAvatar.data(), localController.data()));
+        uint8_t mode = 1;
+        assert(ReadField(grabController.data(), 0xE0, mode) && mode == 0);
+
+        Features::bDeadInteraction.store(false);
+        torch.original = [](void*, void*, void*) {
+            assert(DeadController(localAvatar.data(), localController.data()) && interactionDepth == 0);
+        };
+        torch.hook(flashlightController.data(), nullptr, nullptr);
+    }
+
+    void TestInteractionUIOwnership() {
+        ConfigureWorld();
+        Put(localAvatar, 0x28, uint8_t{1});
+        Put(localController, 0x38, uint8_t{1});
+        Features::bDeadInteraction.store(true);
+        Put(journalObject, 0xB8, uint8_t{1});
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
+        assert(!BeginInteraction(doorController.data(), InteractionKind::Door).changed);
+        assert(!BeginInteraction(flashlightController.data(), InteractionKind::Flashlight).changed);
+        assert(!Sample().deadInteractionActive);
+        Hooks::oPropGrabUpdate = [](void*, void*) {
+            assert(DeadController(localAvatar.data(), localController.data()));
+            uint8_t mode = 1, open = 0;
+            assert(ReadField(grabController.data(), 0xE0, mode) && mode == 0);
+            assert(ReadField(journalObject.data(), 0xB8, open) && open == 1);
+        };
+        Hooks::hkPropGrabUpdate(grabController.data(), nullptr);
+        Put(journalObject, 0xB8, uint8_t{0});
+        for (size_t offset : {0x20, 0x21}) {
+            Put(menuController, offset, uint8_t{1});
+            assert(!BeginInteraction(doorController.data(), InteractionKind::Door).changed);
+            Put(menuController, offset, uint8_t{0});
+        }
+        GhostControl::inputCaptured.store(true);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
+        GhostControl::inputCaptured.store(false);
+        Features::bOverlayInput.store(true);
+        assert(!BeginInteraction(grabController.data(), InteractionKind::Grab).changed);
+        Hooks::worldInputHooks[12].original = [](void*, void*, void*) {
+            ++nativeInputs;
+            assert(DeadController(localAvatar.data(), localController.data()) && interactionDepth == 0);
+        };
+        inputPhase.call = [](void*, void*) -> int32_t { return 3; };
+        Hooks::worldInputHooks[12].hook(doorController.data(), nullptr, nullptr);
+        assert(nativeInputs == 0);
+        inputPhase.call = [](void*, void*) -> int32_t { return 4; };
+        Hooks::worldInputHooks[12].hook(doorController.data(), nullptr, nullptr);
+        assert(nativeInputs == 1);
+        Features::bOverlayInput.store(false);
+
+        // The frame loop may refresh targeting without pretending the controller is alive.
+        Hooks::worldInputHooks[12].original = [](void* instance, void*, void*) {
+            uint8_t mode = 0, dead = 1;
+            assert(instance == doorController.data());
+            assert(ReadField(grabController.data(), 0xE0, mode) && mode == 1);
+            assert(ReadField(localController.data(), 0x38, dead) && dead == 0);
+            ++nativeInputs;
+        };
+        Hooks::oPropGrabUpdate = [](void*, void*) {
+            assert(DeadController(localAvatar.data(), localController.data()));
+            Hooks::worldInputHooks[12].hook(doorController.data(), nullptr, nullptr);
+            assert(DeadController(localAvatar.data(), localController.data()));
+            assert(interactionDepth == 1);
+        };
+        Hooks::hkPropGrabUpdate(grabController.data(), nullptr);
+        assert(nativeInputs == 2 && interactionDepth == 0);
+        assert(DeadController(localAvatar.data(), localController.data()));
+    }
+
+    bool InvokeFaultingMovement() {
+        __try {
+            Hooks::UpdatePlayerInput([](void*, void*) {
+                RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+            }, movementController.data(), nullptr);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void TestOverlayInput() {
+        ConfigureWorld();
+        overlayReady = true;
+        cursorMode = 1;
+        cursorShown = false;
+        cursorLock.call = [](void*) -> int32_t { return cursorMode; };
+        cursorVisible.call = [](void*) { return cursorShown; };
+        Hooks::oCursorLock = [](int32_t mode, void*) {
+            if (faultCursorRestore && mode != 0)
+                RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+            cursorMode = mode;
+        };
+        Hooks::oCursorVisible = [](bool visible, void*) { cursorShown = visible; };
+        Features::bOverlayInput.store(true);
+        assert(ServiceOverlay() && cursorMode == 0 && cursorShown);
+        Put(localAvatar, 0x28, uint8_t{1});
+        Put(localController, 0x38, uint8_t{1});
+        Put(movementController, 0x20, uint8_t{1});
+        Put(movementController, 0x21, uint8_t{0});
+        Hooks::UpdatePlayerInput([](void*, void*) {
+            uint8_t movement = 1, look = 1;
+            assert(ReadField(movementController.data(), 0x20, movement) && movement == 0);
+            assert(ReadField(movementController.data(), 0x21, look) && look == 0);
+            assert(DeadController(localAvatar.data(), localController.data()));
+        }, movementController.data(), nullptr);
+        uint8_t movement = 0, look = 1;
+        assert(ReadField(movementController.data(), 0x20, movement) && movement == 1);
+        assert(ReadField(movementController.data(), 0x21, look) && look == 0);
+        Hooks::UpdatePlayerInput([](void*, void*) {
+            assert(movementDepth == 1);
+            cleanupRequested.store(true);
+            ServiceWorldOptions();
+            assert(!cleanupComplete.load());
+            cleanupRequested.store(false);
+        }, movementController.data(), nullptr);
+        assert(movementDepth == 0);
+        assert(!InvokeFaultingMovement());
+        assert(ReadField(movementController.data(), 0x20, movement) && movement == 1);
+        Hooks::UpdatePlayerInput([](void* instance, void*) {
+            assert(instance == remoteAvatar.data());
+            uint8_t movement = 0;
+            assert(ReadField(movementController.data(), 0x20, movement) && movement == 1);
+        }, remoteAvatar.data(), nullptr);
+
+        Hooks::hkCursorLock(2, nullptr);
+        Hooks::hkCursorVisible(false, nullptr);
+        assert(cursorMode == 0 && cursorShown);
+        Features::bOverlayInput.store(false);
+        assert(ServiceOverlay() && cursorMode == 2 && !cursorShown && !cursorState.active);
+        Features::bOverlayInput.store(true);
+        assert(ServiceOverlay());
+        Hooks::hkCursorLock(1, nullptr);
+        faultCursorRestore = true;
+        cleanupRequested.store(true);
+        Hooks::UpdateRadar();
+        assert(!cleanupComplete.load() && cursorState.active);
+        faultCursorRestore = false;
+        Hooks::UpdateRadar();
+        assert(cleanupComplete.load() && cursorMode == 1 && !cursorShown && !cursorState.active);
+        cleanupRequested.store(false);
+        Features::bOverlayInput.store(false);
+    }
+
+    void TestHangedManControl() {
+        for (bool self : {false, true}) {
+            for (auto action : {Radar::Action::Kill, Radar::Action::KillHangedMan}) {
+                ConfigureBackend();
+                auto& avatar = self ? localAvatar : remoteAvatar;
+                auto data = Sample();
+                const int actor = self ? localActor : remoteActor;
+                assert(Radar::Queue(actor, data.generation, action, GetTickCount64()));
+                data = Sample();
+                assert(kills == 1 && lastDeathPlayer == avatar.data());
+                assert(lastDeathType == (action == Radar::Action::KillHangedMan ? 0 : 1));
+                assert(pending.size() == 1);
+                Sample();
+                assert(pending.size() == 1 && kills == 1);
+                Put(avatar, 0x28, uint8_t{1});
+                data = Sample();
+                assert(pending.empty() && data.message.find("confirmed") != std::string::npos);
+                assert(!Radar::Queue(actor, data.generation, action, GetTickCount64()));
+            }
+        }
     }
 
     void TestBackend() {
@@ -836,14 +1134,128 @@ namespace {
         assert(!data.sanityAvailable);
         assert(!Radar::Queue(2, data.generation, Radar::Action::SetSanity, GetTickCount64(), 50));
     }
+
+    void TestReviveControl() {
+        for (int source : {1, 7}) for (int actor : {1, 2}) {
+            ConfigureBackend();
+            reviveSources.count = 2;
+            reviveSources.entries[0] = 4;
+            reviveSources.entries[1] = source;
+            auto& avatar = actor == 1 ? localAvatar : remoteAvatar;
+            expectedReviveView = actor == 1 ? localOwner.data() : remoteOwner.data();
+            Put(avatar, 0x28, uint8_t{1});
+            auto data = Sample();
+            assert(Radar::Queue(actor, data.generation, Radar::Action::Revive, GetTickCount64()));
+            data = Sample();
+            assert(revives == 1 && sanityCalls == 0 && sanityRoots == 0);
+            assert(data.players[actor - 1].pending);
+            Put(avatar, 0x28, uint8_t{0});
+            data = Sample();
+            assert(!data.players[actor - 1].pending && data.message.find("confirmed") != std::string::npos);
+        }
+
+        for (int source : {0, 2, 3, 4, 5, 6}) {
+            ConfigureBackend();
+            reviveSources.entries[0] = source;
+            Put(localAvatar, 0x28, uint8_t{1});
+            auto data = Sample();
+            assert(data.actionsAllowed && data.sanityAvailable && !data.reviveAvailable);
+            assert(!Radar::Queue(1, data.generation, Radar::Action::Revive, GetTickCount64()));
+            assert(Radar::Read().message.find("tarot cards") != std::string::npos);
+            assert(Radar::Queue(2, data.generation, Radar::Action::Kill, GetTickCount64()));
+            Sample();
+            assert(!revives && kills == 1);
+        }
+
+        for (int invalid = 0; invalid < 7; ++invalid) {
+            ConfigureBackend();
+            Put(localAvatar, 0x28, uint8_t{1});
+            if (invalid == 0) reviveReady = false;
+            if (invalid == 1) levelValues.call = [](void*) -> void* { return nullptr; };
+            if (invalid == 2) Put(levelValuesObject, 0x38, static_cast<void*>(nullptr));
+            if (invalid == 3) destroyedObject = difficultyObject.data();
+            if (invalid == 4) Put(difficultyObject, 0xB0, static_cast<void*>(nullptr));
+            if (invalid == 5) reviveSources.count = 129;
+            if (invalid == 6) levelValues.call = [](void*) -> void* {
+                RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+                return nullptr;
+            };
+            auto data = Sample();
+            assert(data.actionsAllowed && data.sanityAvailable &&
+                !data.reviveAvailable && !data.reviveRestriction.empty());
+            assert(!Radar::Queue(1, data.generation, Radar::Action::Revive, GetTickCount64()));
+            assert(!revives && Radar::requests.empty());
+        }
+
+        for (int actor : {1, 2}) {
+            ConfigureBackend();
+            auto& avatar = actor == 1 ? localAvatar : remoteAvatar;
+            Put(avatar, 0x28, uint8_t{1});
+            auto data = Sample();
+            assert(Radar::Queue(actor, data.generation, Radar::Action::Revive, GetTickCount64()));
+            reviveSources.count = 0;
+            data = Sample();
+            assert(data.actionsAllowed && !data.reviveAvailable && !revives && pending.empty());
+            assert(data.message.find("Revive rejected") != std::string::npos);
+            Sample();
+            assert(!revives);
+        }
+
+        for (int missing = 0; missing < 9; ++missing) {
+            ConfigureBackend();
+            Put(remoteAvatar, 0x28, uint8_t{1});
+            auto data = Sample();
+            assert(Radar::Queue(2, data.generation, Radar::Action::Revive, GetTickCount64()));
+            if (missing == 0) Put(remoteAvatar, 0xD8, static_cast<void*>(nullptr));
+            if (missing == 1) destroyedObject = remoteCorpse.data();
+            if (missing == 2) Put(remoteAnimations, 0x28, static_cast<void*>(localAvatar.data()));
+            if (missing == 3) Put(remoteCorpse, 0x40, static_cast<void*>(nullptr));
+            if (missing == 4) Put(remoteAnimations, 0x110, static_cast<void*>(nullptr));
+            if (missing == 5) Put(remoteAvatar, 0x2B, uint8_t{1});
+            if (missing == 6) destroyedObject = remoteOwner.data();
+            if (missing == 7) Put(remoteAvatar, 0x100, static_cast<void*>(nullptr));
+            if (missing == 8) Put(remoteCorpse, 0xC0, static_cast<void*>(localAvatar.data()));
+            data = Sample();
+            assert(!revives && !sanityRoots && pending.empty() && data.actionsAllowed);
+            assert(data.message.find("Revive rejected") != std::string::npos);
+        }
+
+        for (bool nativeFault : {false, true}) {
+            ConfigureBackend();
+            Put(remoteAvatar, 0x28, uint8_t{1});
+            auto data = Sample();
+            assert(Radar::Queue(2, data.generation, Radar::Action::Revive, GetTickCount64()));
+            faultAction = nativeFault;
+            rejectRevive = !nativeFault;
+            data = Sample();
+            assert(revives == 1 && !sanityRoots && pending.empty() && !data.actionsAllowed);
+            assert(data.message.find("failed") != std::string::npos);
+            Sample();
+            assert(revives == 1);
+        }
+
+        ConfigureBackend();
+        Put(remoteAvatar, 0x28, uint8_t{1});
+        auto data = Sample();
+        assert(Radar::Queue(2, data.generation, Radar::Action::Revive, GetTickCount64()));
+        rpcArrayNew = [](void*, uintptr_t) -> void* { return nullptr; };
+        data = Sample();
+        assert(!revives && !sanityRoots && pending.empty() && !data.actionsAllowed);
+        assert(data.message.find("failed") != std::string::npos);
+    }
 }
 
 int main() {
     TestMathAndQueue();
     TestBackend();
     TestSanityControl();
+    TestReviveControl();
+    TestHangedManControl();
     TestCursedObjects();
     TestLobbyPickup();
     TestVisibility();
     TestDeadInteraction();
+    TestDeadFlashlight();
+    TestInteractionUIOwnership();
+    TestOverlayInput();
 }

@@ -75,7 +75,10 @@ void UnloadThread()
                Menu::Shutdown();
 
                FreeConsole();
-               FreeLibraryAndExitThread(gSelfModule, 0);
+               // MSVC's std::thread holds a DLL reference until its normal CRT exit.
+               if (!FreeLibrary(gSelfModule))
+                    Logger::Log("[ERROR] Could not release the injected DLL reference (%lu).", GetLastError());
+               return;
           }
           Sleep(100);
      }

@@ -99,7 +99,14 @@ namespace Hooks {
         InputAction_t original;
         InputAction_t hook;
     };
-    extern WorldInputHook worldInputHooks[13];
+    extern WorldInputHook worldInputHooks[14];
+    using CursorLock_t = void (*)(int32_t, void*);
+    using CursorVisible_t = void (*)(bool, void*);
+    inline CursorLock_t oCursorLock = nullptr;
+    inline CursorVisible_t oCursorVisible = nullptr;
+    void hkCursorLock(int32_t state, void* methodInfo);
+    void hkCursorVisible(bool visible, void* methodInfo);
+    void UpdatePlayerInput(Update_t original, void* instance, void* methodInfo);
 
     typedef void (*EvidenceController_SpawnBoneDNAEvidence)(void* instance, void* levelRoom, void* methodInfo);
     typedef void (*DNAEvidence_Spawn_t)(void* instance, int32_t roomId, void* methodInfo);

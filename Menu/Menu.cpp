@@ -15,6 +15,7 @@
 #include "../Features/Recovery.h"
 #include "../Features/Stamina.h"
 #include "../Features/WorldActions.h"
+#include "../Features/Reporting.h"
 #include "../Hooks/Hooks.h"
 #include "../Utils/Logger.h"
 #include "../kiero/kiero.h"
@@ -173,7 +174,7 @@ namespace Menu {
     }
 
     static bool BeginPanel(const char* name, bool* visible, const ImVec2& size,
-        const ImVec2& position, float opacity, float& previousScale)
+        const ImVec2& position, float opacity, float& previousScale, ImGuiWindowFlags flags = 0)
     {
         const ImVec2 display = ImGui::GetIO().DisplaySize;
         const ImVec2 maximum((std::max)(1.0f, display.x), (std::max)(1.0f, display.y));
@@ -182,7 +183,7 @@ namespace Menu {
         ImGui::SetNextWindowSizeConstraints(
             ImVec2((std::min)(260.0f * gAppliedScale, maximum.x), (std::min)(180.0f * gAppliedScale, maximum.y)), maximum);
         ImGui::SetNextWindowBgAlpha(opacity);
-        const bool open = ImGui::Begin(name, visible, ImGuiWindowFlags_NoCollapse);
+        const bool open = ImGui::Begin(name, visible, ImGuiWindowFlags_NoCollapse | flags);
         if (previousScale > 0.0f && previousScale != gAppliedScale) {
             const ImVec2 current = ImGui::GetWindowSize();
             const float ratio = gAppliedScale / previousScale;
@@ -222,7 +223,7 @@ namespace Menu {
         ImGui::BeginDisabled(!interact && (!fresh || !data.actionsAllowed || !data.deadInteractionAvailable || !localDead));
         if (ImGui::Checkbox("Interact while dead (PC)", &interact)) Features::bDeadInteraction.store(interact);
         ImGui::EndDisabled();
-        ItemHint("Experimental. Remain dead; native item and ownership restrictions still apply.");
+        ItemHint("Experimental. Close the controls with HOME and close the journal/menu to interact. Dead inventory limits and native restrictions remain.");
         ImGui::TextDisabled("Interaction: %s", !fresh ? "unavailable / stale" :
             data.deadInteractionActive ? "active" : interact ? "requested / waiting" : "native");
         if (!fresh) ImGui::TextDisabled("Waiting for match data.");
@@ -236,7 +237,7 @@ namespace Menu {
         ImGui::BeginDisabled(!controlling && (!controlFresh || !control.available || control.restoring));
         if (ImGui::Checkbox("Control ghost", &controlling)) GhostControl::desired.store(controlling);
         ImGui::EndDisabled();
-        ItemHint("No hunt required. Your body stays stationary and vulnerable. HOME hides the overlay to resume movement.");
+        ItemHint("No hunt required. Your body stays stationary and vulnerable. HOME closes the controls to resume movement.");
         ImGui::TextDisabled("Control: %s", !controlFresh ? "unavailable / stale" : control.restoring ? "restoration pending" :
             control.active ? (control.hunting ? "controlled hunt" : "controlled, not hunting") : "native AI");
         ImGui::BeginDisabled(!controlFresh || !control.active || control.hunting || control.restoring);
@@ -300,14 +301,22 @@ namespace Menu {
     {
         if (!gRadarVisible) return;
         static float previousScale = 0.0f;
+        const ImGuiWindowFlags passiveFlags = gMenuVisible ? 0 :
+            ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing;
         if (!BeginPanel("Radar", &gRadarVisible, ImVec2(390.0f, 540.0f),
-            ImVec2(430.0f, 35.0f), gRadarOpacity, previousScale)) {
+            ImVec2(430.0f, 35.0f), gRadarOpacity, previousScale, passiveFlags)) {
             ImGui::End();
             return;
         }
         const auto data = Radar::Read();
         const bool fresh = Radar::IsFresh(data, GetTickCount64());
         const float scale = gAppliedScale;
+        ImGui::TextUnformatted(Reporting::installed.load()
+            ? "Local automatic self-reports: blocked"
+            : "WARNING: Local automatic self-reports are NOT blocked.");
+        ImGui::TextUnformatted(Reporting::installed.load()
+            ? "Known HACKER termination: blocked"
+            : "WARNING: Known HACKER termination is NOT blocked.");
         static float range = 25.0f;
         ImGui::SetNextItemWidth(155.0f * scale);
         ImGui::SliderFloat("Range", &range, 5.0f, 100.0f, "%.0f m", ImGuiSliderFlags_AlwaysClamp);
@@ -417,6 +426,7 @@ namespace Menu {
         static int killActor = 0;
         static uint64_t killGeneration = 0;
         static std::string killName;
+        static Radar::Action killAction = Radar::Action::Kill;
         bool confirmKill = false;
         if (fresh && ImGui::BeginTable("radar_players", 4, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp |
             ImGuiTableFlags_ScrollX, ImVec2(0, 0), 350.0f * scale)) {
@@ -442,14 +452,26 @@ namespace Menu {
                     killActor = player.actorId;
                     killGeneration = data.generation;
                     killName = player.name;
+                    killAction = Radar::Action::Kill;
                     confirmKill = true;
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
-                ImGui::BeginDisabled(!allowed || !player.dead);
+                ImGui::BeginDisabled(!allowed || !player.dead || !data.reviveAvailable);
                 if (ImGui::SmallButton("Revive"))
                     SubmitRadarAction(player.actorId, data.generation, Radar::Action::Revive);
                 ImGui::EndDisabled();
+                ItemHint(data.reviveRestriction.c_str());
+                ImGui::BeginDisabled(!allowed || player.dead);
+                if (ImGui::SmallButton("Hanged Man")) {
+                    killActor = player.actorId;
+                    killGeneration = data.generation;
+                    killName = player.name;
+                    killAction = Radar::Action::KillHangedMan;
+                    confirmKill = true;
+                }
+                ImGui::EndDisabled();
+                ItemHint("Kill using the native Hanged Man tarot death animation.");
                 if (player.pending) ImGui::TextUnformatted("Pending");
                 ImGui::BeginDisabled(!allowed || player.dead || !player.sanityValid || !data.sanityAvailable ||
                     (!player.local && !data.remoteSanityAllowed));
@@ -476,6 +498,8 @@ namespace Menu {
             ImGui::EndTable();
         }
         if (!fresh) ImGui::TextUnformatted("Waiting for fresh game-thread observations.");
+        if (fresh && data.actionsAllowed && !data.reviveAvailable)
+            ImGui::TextWrapped("%s", data.reviveRestriction.c_str());
         if (fresh && !data.sanityAvailable) ImGui::TextDisabled("Sanity controls unavailable; see logs.");
         if (fresh && data.actionsAllowed && !data.remoteSanityAllowed)
             ImGui::TextDisabled("Sanity: self only in this host configuration.");
@@ -484,9 +508,10 @@ namespace Menu {
         if (confirmKill) ImGui::OpenPopup("Confirm player kill");
         if (ImGui::BeginPopupModal("Confirm player kill", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Kill %s in this private/offline match?", killName.c_str());
+            ImGui::Text("Animation: %s", killAction == Radar::Action::KillHangedMan ? "Hanged Man" : "Snapped neck");
             ImGui::BeginDisabled(!fresh || !data.actionsAllowed || data.generation != killGeneration);
             if (ImGui::Button("Confirm")) {
-                SubmitRadarAction(killActor, killGeneration, Radar::Action::Kill);
+                SubmitRadarAction(killActor, killGeneration, killAction);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndDisabled();
@@ -674,8 +699,35 @@ namespace Menu {
         ImGui::End();
     }
 
+    static void UpdateOverlayInput(bool focused)
+    {
+        if (!gMenuVisible) gRebinding = false;
+        const bool capture = gMenuVisible && focused;
+        Features::bOverlayInput.store(capture);
+        GhostControl::inputCaptured.store(!focused || gRebinding || gMenuVisible);
+        ImGuiIO& io = ImGui::GetIO();
+        if (!capture && io.MouseDrawCursor) {
+            ImGui::SetWindowFocus(nullptr);
+            io.ClearInputKeys();
+            io.ClearInputMouse();
+        }
+        io.MouseDrawCursor = capture;
+        const ImGuiConfigFlags passiveFlags = ImGuiConfigFlags_NoMouse |
+            ImGuiConfigFlags_NoKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
+        if (capture) io.ConfigFlags &= ~passiveFlags;
+        else io.ConfigFlags |= passiveFlags;
+    }
+
+    static void DrawOverlayWindows()
+    {
+        if (gMenuVisible) DrawMenuWindow();
+        DrawRadarWindow();
+    }
+
     static void ShutdownImGui()
     {
+        Features::bOverlayInput.store(false);
+        GhostControl::inputCaptured.store(false);
         if (!gImGuiInitialized) {
             return;
         }
@@ -709,6 +761,9 @@ namespace Menu {
             if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
                 return TRUE;
             }
+            if (GetForegroundWindow() == hWnd &&
+                ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_INPUT ||
+                 msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR)) return TRUE;
         }
 
         if (gOriginalWndProc) {
@@ -758,10 +813,9 @@ namespace Menu {
             }
             homeWasDown = homeDown;
             PollControlKey();
-            GhostControl::inputCaptured.store(GetForegroundWindow() != gWindow || gRebinding ||
-                (gMenuVisible && (ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard)));
+            UpdateOverlayInput(GetForegroundWindow() == gWindow);
 
-            if (gMenuVisible) {
+            if (gMenuVisible || gRadarVisible) {
                 if (!gRenderTargetView) {
                     CreateRenderTarget(swapChain);
                 }
@@ -770,10 +824,8 @@ namespace Menu {
                 ImGui_ImplWin32_NewFrame();
                 if (gUiScale != gAppliedScale) ApplyStyle();
                 ImGui::NewFrame();
-                DrawMenuWindow();
-                DrawRadarWindow();
-                GhostControl::inputCaptured.store(GetForegroundWindow() != gWindow || gRebinding ||
-                    ImGui::GetIO().WantCaptureMouse || ImGui::GetIO().WantCaptureKeyboard);
+                DrawOverlayWindows();
+                UpdateOverlayInput(GetForegroundWindow() == gWindow);
                 ImGui::Render();
 
                 gContext->OMSetRenderTargets(1, &gRenderTargetView, nullptr);
